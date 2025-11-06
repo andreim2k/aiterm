@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/alvinunreal/tmuxai/config"
+	"github.com/andreim2k/aiterm/config"
 )
 
 func TestAzureOpenAIEndpoint(t *testing.T) {

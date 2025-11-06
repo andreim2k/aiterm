@@ -46,8 +46,8 @@ func (p *TmuxPaneDetails) String() string {
 		fmt.Sprintf("Args: %s%s%s\n", gray, p.CurrentCommandArgs, reset) +
 		fmt.Sprintf("Shell: %s%s%s\n", blue, p.Shell, reset) +
 		fmt.Sprintf("OS: %s%s%s\n", gray, p.OS, reset) +
-		fmt.Sprintf("TmuxAI Pane: %s\n", formatBool(p.IsTmuxAiPane)) +
-		fmt.Sprintf("TmuxAI Exec Pane: %s\n", formatBool(p.IsTmuxAiExecPane)) +
+		fmt.Sprintf("AITerm Pane: %s\n", formatBool(p.IsTmuxAiPane)) +
+		fmt.Sprintf("AITerm Exec Pane: %s\n", formatBool(p.IsTmuxAiExecPane)) +
 		fmt.Sprintf("Prepared: %s\n", formatBool(p.IsPrepared)) +
 		fmt.Sprintf("Sub Shell: %s\n", formatBool(p.IsSubShell))
 }
@@ -59,9 +59,9 @@ func (p *TmuxPaneDetails) FormatInfo(f *InfoFormatter) string {
 	var paneTitle string
 	switch {
 	case p.IsTmuxAiPane:
-		paneTitle = fmt.Sprintf("%s: TmuxAI", cleanId)
+		paneTitle = fmt.Sprintf("%s: AITerm", cleanId)
 	case p.IsTmuxAiExecPane:
-		paneTitle = fmt.Sprintf("%s: TmuxAI Exec Pane", cleanId)
+		paneTitle = fmt.Sprintf("%s: AITerm Exec Pane", cleanId)
 	default:
 		paneTitle = fmt.Sprintf("%s: Read Only", cleanId)
 	}
@@ -89,7 +89,7 @@ func (p *TmuxPaneDetails) FormatInfo(f *InfoFormatter) string {
 	formatLine("OS", p.OS)
 
 	// Add status flags each on their own line
-	formatLine("TmuxAI", f.FormatBool(p.IsTmuxAiPane))
+	formatLine("AITerm", f.FormatBool(p.IsTmuxAiPane))
 	formatLine("Exec Pane", f.FormatBool(p.IsTmuxAiExecPane))
 	formatLine("Prepared", f.FormatBool(p.IsPrepared))
 	formatLine("Sub Shell", f.FormatBool(p.IsSubShell))

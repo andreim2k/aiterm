@@ -1,4 +1,4 @@
-// cli.go: Command-line interface for TmuxAI, including root command and flags
+// cli.go: Command-line interface for AITerm, including root command and flags
 
 package cli
 
@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/alvinunreal/tmuxai/config"
-	"github.com/alvinunreal/tmuxai/internal"
-	"github.com/alvinunreal/tmuxai/logger"
+	"github.com/andreim2k/aiterm/config"
+	"github.com/andreim2k/aiterm/internal"
+	"github.com/andreim2k/aiterm/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -18,19 +18,35 @@ var (
 	taskFileFlag string
 	kbFlag       string
 	modelFlag    string
+	togglePane   bool
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "tmuxai [request message]",
-	Short: "TmuxAI - AI-Powered Tmux Companion",
-	Long:  `TmuxAI - AI-Powered Tmux Companion`,
+	Use:   "aiterm [request message]",
+	Short: "AITerm - AI-Powered Tmux Companion",
+	Long:  `AITerm - AI-Powered Tmux Companion`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if v, _ := cmd.Flags().GetBool("version"); v {
-			fmt.Printf("tmuxai version: %s\ncommit: %s\nbuild date: %s\n", internal.Version, internal.Commit, internal.Date)
+			fmt.Printf("aiterm version: %s\ncommit: %s\nbuild date: %s\n", internal.Version, internal.Commit, internal.Date)
 			os.Exit(0)
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
+		// Handle toggle-pane flag (hidden command for tmux binding)
+		if togglePane {
+			if len(args) != 2 {
+				fmt.Fprintf(os.Stderr, "Usage: aiterm --toggle-pane <chat-pane-id> <exec-pane-id>\n")
+				os.Exit(1)
+			}
+			chatPaneId := args[0]
+			execPaneId := args[1]
+			if err := internal.TogglePaneCollapse(chatPaneId, execPaneId); err != nil {
+				logger.Error("Failed to toggle pane: %v", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+
 		cfg, err := config.Load()
 		if err != nil {
 			logger.Error("Error loading configuration: %v", err)
@@ -87,6 +103,8 @@ func init() {
 	rootCmd.Flags().StringVar(&kbFlag, "kb", "", "Comma-separated list of knowledge bases to load (e.g., --kb docker,git)")
 	rootCmd.Flags().StringVar(&modelFlag, "model", "", "AI model configuration to use (e.g., --model gpt4)")
 	rootCmd.Flags().BoolP("version", "v", false, "Print version information")
+	rootCmd.Flags().BoolVar(&togglePane, "toggle-pane", false, "Toggle pane collapse (internal use)")
+	rootCmd.Flags().MarkHidden("toggle-pane")
 }
 
 func Execute() error {

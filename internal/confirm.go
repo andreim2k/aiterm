@@ -23,31 +23,27 @@ func (m *Manager) confirmedToExecFn(command string, prompt string, edit bool) (b
 		return true, command
 	}
 
-	promptColor := color.New(color.FgCyan, color.Bold)
+	promptColor := color.New(color.FgGreen, color.Bold)
 
 	// Score the command for risk assessment
 	assessment := ScoreCommand(command)
 
 	// Determine color and icon based on risk level
-	var riskColor *color.Color
 	var riskIcon string
 	switch assessment.Level {
 	case RiskDanger:
-		riskColor = color.New(color.FgRed, color.Bold)
 		riskIcon = "!"
 	case RiskUnknown:
-		riskColor = color.New(color.FgYellow, color.Bold)
 		riskIcon = "?"
 	default: // RiskSafe
-		riskColor = color.New(color.FgGreen, color.Bold)
 		riskIcon = "✓"
 	}
 
 	var promptText string
 	if edit {
-		promptText = fmt.Sprintf("%s %s [Y/n/e]: ", riskColor.Sprint(riskIcon), prompt)
+		promptText = fmt.Sprintf("%s %s [Y/n/e]: ", riskIcon, prompt)
 	} else {
-		promptText = fmt.Sprintf("%s %s [Y/n]: ", riskColor.Sprint(riskIcon), prompt)
+		promptText = fmt.Sprintf("%s %s [Y/n]: ", riskIcon, prompt)
 	}
 
 	promptStr := promptColor.Sprint(promptText)
@@ -94,7 +90,7 @@ func (m *Manager) confirmedToExecFn(command string, prompt string, edit bool) (b
 		}
 
 		// Create a temporary file for editing
-		tmpFile, err := os.CreateTemp("", "tmuxai-edit-*.sh")
+		tmpFile, err := os.CreateTemp("", "aiterm-edit-*.sh")
 		if err != nil {
 			fmt.Printf("Error creating temporary file: %v\n", err)
 			return false, ""

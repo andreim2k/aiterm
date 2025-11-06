@@ -3,7 +3,7 @@ package internal
 import (
 	"testing"
 
-	"github.com/alvinunreal/tmuxai/config"
+	"github.com/andreim2k/aiterm/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

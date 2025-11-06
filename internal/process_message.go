@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alvinunreal/tmuxai/logger"
-	"github.com/alvinunreal/tmuxai/system"
+	"github.com/andreim2k/aiterm/logger"
+	"github.com/andreim2k/aiterm/system"
 	"github.com/briandowns/spinner"
 )
 
@@ -19,7 +19,7 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 		m.squashHistory()
 	}
 
-	s := spinner.New(spinner.CharSets[26], 100*time.Millisecond)
+	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
 	s.Start()
 
 	// check for status change before processing

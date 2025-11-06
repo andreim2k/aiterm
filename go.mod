@@ -1,4 +1,4 @@
-module github.com/alvinunreal/tmuxai
+module github.com/andreim2k/aiterm
 
 go 1.24.0
 

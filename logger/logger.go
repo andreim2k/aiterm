@@ -13,7 +13,7 @@ var (
 	once     sync.Once
 )
 
-// Logger represents a custom logger for TmuxAI
+// Logger represents a custom logger for AITerm
 type Logger struct {
 	logFile *os.File
 	logger  *log.Logger
@@ -36,12 +36,12 @@ func newLogger() (*Logger, error) {
 		return nil, fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
-	logDir := filepath.Join(homeDir, ".config", "tmuxai")
+	logDir := filepath.Join(homeDir, ".config", "aiterm")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	logPath := filepath.Join(logDir, "tmuxai.log")
+	logPath := filepath.Join(logDir, "aiterm.log")
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)

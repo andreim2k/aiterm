@@ -7,7 +7,7 @@ import (
 	"github.com/fatih/color"
 )
 
-// InfoFormatter provides consistent formatting for TmuxAI information displays
+// InfoFormatter provides consistent formatting for AITerm information displays
 type InfoFormatter struct {
 	// Color schemes
 	HeaderColor  *color.Color

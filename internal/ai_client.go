@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alvinunreal/tmuxai/config"
-	"github.com/alvinunreal/tmuxai/logger"
+	"github.com/andreim2k/aiterm/config"
+	"github.com/andreim2k/aiterm/logger"
 )
 
 // AiClient represents an AI client for interacting with OpenAI-compatible APIs including Azure OpenAI
@@ -133,6 +133,14 @@ func (c *AiClient) determineAPIType(model string) string {
 				return "azure"
 			case "openrouter":
 				return "openrouter"
+			case "requesty":
+				return "requesty"
+			case "zai":
+				return "zai"
+			case "xai":
+				return "xai"
+			case "alibaba":
+				return "alibaba"
 			default:
 				return "openrouter"
 			}
@@ -192,6 +200,14 @@ func (c *AiClient) GetResponseFromChatMessages(ctx context.Context, chatMessages
 	case "azure":
 		response, err = c.ChatCompletion(ctx, aiMessages, model)
 	case "openrouter":
+		response, err = c.ChatCompletion(ctx, aiMessages, model)
+	case "requesty":
+		response, err = c.ChatCompletion(ctx, aiMessages, model)
+	case "zai":
+		response, err = c.ChatCompletion(ctx, aiMessages, model)
+	case "xai":
+		response, err = c.ChatCompletion(ctx, aiMessages, model)
+	case "alibaba":
 		response, err = c.ChatCompletion(ctx, aiMessages, model)
 	default:
 		return "", fmt.Errorf("unknown API type: %s", apiType)
@@ -264,7 +280,18 @@ func (c *AiClient) ChatCompletion(ctx context.Context, messages []Message, model
 	} else {
 		// default OpenRouter/OpenAI compatible endpoint
 		if baseURL == "" {
-			baseURL = c.config.OpenRouter.BaseURL
+			switch provider {
+			case "requesty":
+				baseURL = "https://router.requesty.ai/v1"
+			case "zai":
+				baseURL = "https://api.zai.com/v1"
+			case "xai":
+				baseURL = "https://api.x.ai/v1"
+			case "alibaba":
+				baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+			default:
+				baseURL = c.config.OpenRouter.BaseURL
+			}
 		}
 		base := strings.TrimSuffix(baseURL, "/")
 		url = base + "/chat/completions"
@@ -288,8 +315,8 @@ func (c *AiClient) ChatCompletion(ctx context.Context, messages []Message, model
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(apiKeyHeader, apiKey)
 
-	req.Header.Set("HTTP-Referer", "https://github.com/alvinunreal/tmuxai")
-	req.Header.Set("X-Title", "TmuxAI")
+	req.Header.Set("HTTP-Referer", "https://github.com/andreim2k/aiterm")
+	req.Header.Set("X-Title", "AITerm")
 
 	// Log the request details for debugging before sending
 	logger.Debug("Sending API request to: %s with model: %s", url, model)
@@ -413,8 +440,8 @@ func (c *AiClient) Response(ctx context.Context, messages []Message, model strin
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	req.Header.Set("HTTP-Referer", "https://github.com/alvinunreal/tmuxai")
-	req.Header.Set("X-Title", "TmuxAI")
+	req.Header.Set("HTTP-Referer", "https://github.com/andreim2k/aiterm")
+	req.Header.Set("X-Title", "AITerm")
 
 	// Log the request details for debugging before sending
 	logger.Debug("Sending Responses API request to: %s with model: %s", url, model)

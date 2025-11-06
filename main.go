@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alvinunreal/tmuxai/cli"
-	"github.com/alvinunreal/tmuxai/logger"
+	"github.com/andreim2k/aiterm/cli"
+	"github.com/andreim2k/aiterm/logger"
 )
 
 func main() {
@@ -14,7 +14,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error initializing logger: %v\n", err)
 		os.Exit(1)
 	}
-	logger.Info("TmuxAI starting up")
+	logger.Info("AITerm starting up")
 
 	// Start the CLI
 	if err := cli.Execute(); err != nil {

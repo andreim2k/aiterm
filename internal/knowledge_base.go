@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/alvinunreal/tmuxai/config"
-	"github.com/alvinunreal/tmuxai/logger"
-	"github.com/alvinunreal/tmuxai/system"
+	"github.com/andreim2k/aiterm/config"
+	"github.com/andreim2k/aiterm/logger"
+	"github.com/andreim2k/aiterm/system"
 )
 
 // loadKB loads a knowledge base file by name

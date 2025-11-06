@@ -6,16 +6,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alvinunreal/tmuxai/config"
-	"github.com/alvinunreal/tmuxai/logger"
-	"github.com/alvinunreal/tmuxai/system"
+	"github.com/andreim2k/aiterm/config"
+	"github.com/andreim2k/aiterm/logger"
+	"github.com/andreim2k/aiterm/system"
 )
 
 const helpMessage = `Available commands:
 - /info: Display system information
 - /clear: Clear the chat history
 - /reset: Reset the chat history
-- /prepare: Prepare the pane for TmuxAI automation
+- /prepare: Prepare the pane for AITerm automation
 - /watch <prompt>: Start watch mode
 - /squash: Summarize the chat history
 - /model: List available models and show current model

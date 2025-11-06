@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alvinunreal/tmuxai/logger"
+	"github.com/andreim2k/aiterm/logger"
 )
 
-// TmuxCreateNewPane creates a new horizontal split pane in the specified window and returns its ID
+// TmuxCreateNewPane creates a new vertical split pane in the specified window and returns its ID
 func TmuxCreateNewPane(target string) (string, error) {
-	cmd := exec.Command("tmux", "split-window", "-d", "-h", "-t", target, "-P", "-F", "#{pane_id}")
+	cmd := exec.Command("tmux", "split-window", "-d", "-v", "-t", target, "-P", "-F", "#{pane_id}")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -170,6 +170,25 @@ func TmuxAttachSession(paneId string) error {
 	return nil
 }
 
+// TmuxExecSession runs tmux new-session with proper terminal handling
+// This avoids creating background jobs in the parent shell
+func TmuxExecSession(args []string) error {
+	// Find the tmux binary path
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		return fmt.Errorf("failed to find tmux binary: %w", err)
+	}
+
+	// Create command with proper I/O handling
+	cmd := exec.Command(tmuxPath, args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Run tmux and wait for it to complete
+	return cmd.Run()
+}
+
 func TmuxClearPane(paneId string) error {
 	paneDetails, err := TmuxPanesDetails(paneId)
 	if err != nil {
@@ -187,7 +206,7 @@ func TmuxClearPane(paneId string) error {
 		return err
 	}
 
-	cmd = exec.Command("tmux", "clear-history", "-t", paneId)
+	cmd = exec.Command("tmux", "clear-vistory", "-t", paneId)
 	if err := cmd.Run(); err != nil {
 		logger.Error("Failed to clear history for pane %s: %v", paneId, err)
 		return err
@@ -200,5 +219,348 @@ func TmuxClearPane(paneId string) error {
 	}
 
 	logger.Debug("Successfully cleared pane %s", paneId)
+	return nil
+}
+
+// TmuxSetPaneTitle sets the title of a tmux pane
+func TmuxSetPaneTitle(paneId string, title string) error {
+	cmd := exec.Command("tmux", "select-pane", "-t", paneId, "-T", title)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to set pane title for %s: %v, stderr: %s", paneId, err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Set pane title for %s to: %s", paneId, title)
+	return nil
+}
+
+// TmuxKillPane kills a specific tmux pane
+func TmuxKillPane(paneId string) error {
+	cmd := exec.Command("tmux", "kill-pane", "-t", paneId)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to kill pane %s: %v, stderr: %s", paneId, err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Killed pane %s", paneId)
+	return nil
+}
+
+// TmuxSwitchToOtherPane switches between the current pane and another specified pane
+func TmuxSwitchToOtherPane(chatPaneId, execPaneId string) error {
+	// Get current pane ID
+	currentPaneId, err := TmuxCurrentPaneId()
+	if err != nil {
+		logger.Error("Failed to get current pane ID: %v", err)
+		return err
+	}
+
+	// Determine which pane to switch to
+	var targetPane string
+	if currentPaneId == chatPaneId {
+		targetPane = execPaneId
+	} else {
+		targetPane = chatPaneId
+	}
+
+	// Switch to the target pane
+	cmd := exec.Command("tmux", "select-pane", "-t", targetPane)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Failed to switch to pane %s: %v, stderr: %s", targetPane, err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Switched from pane %s to pane %s", currentPaneId, targetPane)
+	return nil
+}
+
+// TmuxSetupPaneSwitchBinding sets up a tmux key binding for Shift+Tab to switch between panes
+func TmuxSetupPaneSwitchBinding(chatPaneId, execPaneId string) error {
+	// Create a tmux key binding for Shift+Tab (BTab in tmux notation)
+	// The binding will run a command that determines current pane and switches to the other
+	switchCmd := fmt.Sprintf(
+		"if-shell '[ #{pane_id} = %s ]' 'select-pane -t %s' 'select-pane -t %s'",
+		chatPaneId, execPaneId, chatPaneId,
+	)
+
+	cmd := exec.Command("tmux", "bind-key", "-n", "BTab", switchCmd)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to set up Shift+Tab binding: %v, stderr: %s", err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Set up Shift+Tab binding to switch between panes %s and %s", chatPaneId, execPaneId)
+	return nil
+}
+
+// TmuxSetupPaneToggleBinding sets up Shift+Down arrow to toggle chat pane collapse/expand
+func TmuxSetupPaneToggleBinding(chatPaneId, execPaneId string) error {
+	// First unbind any existing S-Down bindings to avoid conflicts
+	// Unbind from root table (our custom binding from previous session)
+	unbindCmd := exec.Command("tmux", "unbind-key", "-n", "S-Down")
+	_ = unbindCmd.Run() // Ignore error if no binding exists
+
+	// Unbind from prefix table (default tmux binding)
+	unbindCmd = exec.Command("tmux", "unbind-key", "-T", "prefix", "S-Down")
+	_ = unbindCmd.Run() // Ignore error if no binding exists
+
+	// Use pure tmux commands - if chat pane is small, expand it; otherwise collapse it
+	// This avoids external process calls that create background job notifications
+	toggleCmd := fmt.Sprintf(
+		"if-shell '[ $(tmux display-message -t %s -p \"#{pane_height}\") -le 2 ]' "+
+			"'select-layout even-vertical ; select-pane -t %s' "+
+			"'resize-pane -t %s -y 1 ; select-pane -t %s'",
+		chatPaneId,
+		chatPaneId,
+		chatPaneId, execPaneId,
+	)
+
+	// Shift+Down arrow is represented as S-Down in tmux
+	cmd := exec.Command("tmux", "bind-key", "-n", "S-Down", toggleCmd)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to set up Shift+Down arrow binding: %v, stderr: %s", err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Set up Shift+Down arrow binding to toggle pane collapse for %s and %s", chatPaneId, execPaneId)
+	return nil
+}
+
+// TmuxSetupStyling sets up tmux color scheme (gray borders, blue status bar)
+func TmuxSetupStyling() error {
+	commands := [][]string{
+		// Enable mouse support
+		{"tmux", "set", "-g", "mouse", "on"},
+		// Set pane borders to gray
+		{"tmux", "set", "-g", "pane-border-style", "fg=colour240"},
+		{"tmux", "set", "-g", "pane-active-border-style", "fg=colour245"},
+		// Set status bar to blue
+		{"tmux", "set", "-g", "status-style", "bg=colour25,fg=white"},
+	}
+
+	for _, cmdArgs := range commands {
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+		if err != nil {
+			logger.Error("Failed to set tmux style %v: %v, stderr: %s", cmdArgs, err, stderr.String())
+			return err
+		}
+	}
+
+	logger.Debug("Set up tmux styling: gray borders, blue status bar")
+	return nil
+}
+
+// TmuxUpdateStatusBar updates the tmux status bar with model information
+func TmuxUpdateStatusBar(modelName, provider string) error {
+	statusText := fmt.Sprintf("aiterm | model: %s (%s)", modelName, provider)
+
+	cmd := exec.Command("tmux", "set", "-g", "status-right", statusText)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to update status bar: %v, stderr: %s", err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Updated status bar with model: %s (%s)", modelName, provider)
+	return nil
+}
+
+// TmuxGetPaneHeight gets the height of a specific pane
+func TmuxGetPaneHeight(paneId string) (int, error) {
+	cmd := exec.Command("tmux", "display-message", "-t", paneId, "-p", "#{pane_height}")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to get pane height for %s: %v, stderr: %s", paneId, err, stderr.String())
+		return 0, err
+	}
+
+	height := strings.TrimSpace(stdout.String())
+	heightInt, err := strconv.Atoi(height)
+	if err != nil {
+		logger.Error("Failed to parse pane height '%s': %v", height, err)
+		return 0, err
+	}
+
+	return heightInt, nil
+}
+
+// TmuxResizePane resizes a pane to a specific height
+func TmuxResizePane(paneId string, height int) error {
+	cmd := exec.Command("tmux", "resize-pane", "-t", paneId, "-y", strconv.Itoa(height))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to resize pane %s to height %d: %v, stderr: %s", paneId, height, err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Resized pane %s to height %d", paneId, height)
+	return nil
+}
+
+// TmuxTogglePaneCollapse toggles between collapsed (1 line) and expanded state
+func TmuxTogglePaneCollapse(chatPaneId, execPaneId string) error {
+	// Get current height of chat pane
+	chatHeight, err := TmuxGetPaneHeight(chatPaneId)
+	if err != nil {
+		return err
+	}
+
+	// If chat pane is very small (<=2 lines), expand it
+	if chatHeight <= 2 {
+		// Expand chat pane to 50% of window
+		err := TmuxResizePane(chatPaneId, 0)
+		if err != nil {
+			return err
+		}
+		// Make panes equal size
+		cmd := exec.Command("tmux", "select-layout", "even-vertical")
+		if err := cmd.Run(); err != nil {
+			logger.Error("Failed to set even layout: %v", err)
+			return err
+		}
+		// Focus chat pane
+		cmd = exec.Command("tmux", "select-pane", "-t", chatPaneId)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		logger.Debug("Expanded chat pane")
+	} else {
+		// Collapse chat pane to 1 line
+		err := TmuxResizePane(chatPaneId, 1)
+		if err != nil {
+			return err
+		}
+		// Focus exec pane
+		cmd := exec.Command("tmux", "select-pane", "-t", execPaneId)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		logger.Debug("Collapsed chat pane")
+	}
+
+	return nil
+}
+
+// TmuxSetupPaneResizeBindings sets up Shift+Up and Shift+Down to resize the active pane
+func TmuxSetupPaneResizeBindings() error {
+	// Unbind any existing S-Up and S-Down bindings
+	unbindUp := exec.Command("tmux", "unbind-key", "-n", "S-Up")
+	_ = unbindUp.Run()
+	unbindDown := exec.Command("tmux", "unbind-key", "-n", "S-Down")
+	_ = unbindDown.Run()
+	unbindUp = exec.Command("tmux", "unbind-key", "-T", "prefix", "S-Up")
+	_ = unbindUp.Run()
+	unbindDown = exec.Command("tmux", "unbind-key", "-T", "prefix", "S-Down")
+	_ = unbindDown.Run()
+
+	// Bind S-Up to resize up
+	cmd := exec.Command("tmux", "bind-key", "-r", "-n", "S-Up", "resize-pane", "-U", "1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to set up Shift+Up binding: %v, stderr: %s", err, stderr.String())
+		return err
+	}
+
+	// Bind S-Down to resize down
+	cmd = exec.Command("tmux", "bind-key", "-r", "-n", "S-Down", "resize-pane", "-D", "1")
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Failed to set up Shift+Down binding: %v, stderr: %s", err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Set up Shift+Up and Shift+Down bindings for resizing")
+	return nil
+}
+
+// TmuxSwapPane swaps the specified pane with the one in the given direction
+func TmuxSwapPane(paneId, direction string) error {
+	cmd := exec.Command("tmux", "swap-pane", direction, "-t", paneId)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to swap pane %s with direction %s: %v, stderr: %s", paneId, direction, err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Swapped pane %s with direction %s", paneId, direction)
+	return nil
+}
+
+// TmuxSelectPane selects the specified pane
+func TmuxSelectPane(paneId string) error {
+	cmd := exec.Command("tmux", "select-pane", "-t", paneId)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to select pane %s: %v, stderr: %s", paneId, err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Selected pane %s", paneId)
+	return nil
+}
+
+// TmuxSetupPaneScrollBindings sets up Ctrl+Up and Ctrl+Down for scrolling the current pane
+func TmuxSetupPaneScrollBindings() error {
+	// Bind M-Up to scroll up
+	cmd := exec.Command("tmux", "bind-key", "-n", "M-Up", "copy-mode", ";", "send-keys", "Up")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		logger.Error("Failed to set up M-Up scroll binding: %v, stderr: %s", err, stderr.String())
+		return err
+	}
+
+	// Bind M-Down to scroll down
+	cmd = exec.Command("tmux", "bind-key", "-n", "M-Down", "copy-mode", ";", "send-keys", "Down")
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Failed to set up M-Down scroll binding: %v, stderr: %s", err, stderr.String())
+		return err
+	}
+
+	logger.Debug("Set up M-Up and M-Down bindings for scrolling")
 	return nil
 }

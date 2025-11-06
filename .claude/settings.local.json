@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(brew install:*)",
+      "Bash(go version:*)",
+      "Bash(tmux source-file:*)",
+      "Bash(tmux list-panes:*)",
+      "Bash(tmux display-message:*)",
+      "Bash(tmux select-pane:*)",
+      "Bash(xargs:*)",
+      "Bash(go doc:*)",
+      "Bash(go list:*)",
+      "Bash(go test:*)",
+      "Bash(tmux list-keys:*)",
+      "Bash(./aiterm --toggle-pane %57 %58)",
+      "Bash(tmux show-option:*)",
+      "Bash(./aiterm --toggle-pane %59 %60)",
+      "Bash(./aiterm --toggle-pane %17 %18)",
+      "Bash(tmux set-option:*)",
+      "Bash(/Users/andrei/Development/aiterm/aiterm --toggle-pane %17 %18)",
+      "Bash(jobs)",
+      "Bash(tmux resize-pane:*)",
+      "Bash(tmux select-layout:*)",
+      "Bash(tmux if-shell:*)",
+      "Bash(tmux unbind-key:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

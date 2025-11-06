@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alvinunreal/tmuxai/config"
-	"github.com/alvinunreal/tmuxai/system"
+	"github.com/andreim2k/aiterm/config"
+	"github.com/andreim2k/aiterm/system"
 )
 
 func (m *Manager) GetTmuxPanes() ([]system.TmuxPaneDetails, error) {
@@ -32,7 +32,7 @@ func (m *Manager) getTmuxPanesInXmlFn(config *config.Config) string {
 	currentTmuxWindow.WriteString("<current_tmux_window_state>\n")
 	panes, _ := m.GetTmuxPanes()
 
-	// Filter out tmuxai_pane
+	// Filter out aiterm_pane
 	var filteredPanes []system.TmuxPaneDetails
 	for _, p := range panes {
 		if !p.IsTmuxAiPane {
@@ -49,7 +49,7 @@ func (m *Manager) getTmuxPanesInXmlFn(config *config.Config) string {
 
 		var title string
 		if pane.IsTmuxAiExecPane {
-			title = "tmuxai_exec_pane"
+			title = "aiterm_exec_pane"
 		} else {
 			title = "read_only_pane"
 		}

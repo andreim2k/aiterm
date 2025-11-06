@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/alvinunreal/tmuxai/config"
-	"github.com/alvinunreal/tmuxai/system"
+	"github.com/andreim2k/aiterm/config"
+	"github.com/andreim2k/aiterm/system"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )

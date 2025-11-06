@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alvinunreal/tmuxai/config"
+	"github.com/andreim2k/aiterm/config"
 	"github.com/nyaosorg/go-readline-ny"
 	"github.com/nyaosorg/go-readline-ny/completion"
 	"github.com/nyaosorg/go-readline-ny/keys"
@@ -64,6 +64,54 @@ func (c *CLIInterface) Start(initMessage string) error {
 	// Bind TAB key to completion
 	editor.BindKey(keys.CtrlI, c.newCompleter())
 
+	// Bind Shift+Tab to switch panes
+	editor.BindKey(keys.ShiftTab, &readline.GoCommand{
+		Func: func(ctx context.Context, buffer *readline.Buffer) readline.Result {
+			_ = c.manager.SwitchPane()
+			return readline.CONTINUE
+		},
+	})
+	// Shift+Up is handled by tmux binding only (not by readline)
+	// Just ignore the escape sequence if it somehow reaches readline
+	editor.BindKey(keys.Code("\x1B[1;2A"), &readline.GoCommand{
+		Func: func(ctx context.Context, buffer *readline.Buffer) readline.Result {
+			// Do nothing - let tmux handle it
+			return readline.CONTINUE
+		},
+	})
+
+	// Shift+Down is handled by tmux binding only (not by readline)
+	// Just ignore the escape sequence if it somehow reaches readline
+	editor.BindKey(keys.Code("\x1B[1;2B"), &readline.GoCommand{
+		Func: func(ctx context.Context, buffer *readline.Buffer) readline.Result {
+			// Do nothing - let tmux handle it
+			return readline.CONTINUE
+		},
+	})
+	// Shift+Up is handled by tmux binding only (not by readline)
+	// Just ignore the escape sequence if it somehow reaches readline
+	editor.BindKey(keys.Code("\x1B[1;2A"), &readline.GoCommand{
+		Func: func(ctx context.Context, buffer *readline.Buffer) readline.Result {
+			// Do nothing - let tmux handle it
+			return readline.CONTINUE
+		},
+	})
+	// Alt+Up is handled by tmux binding only (not by readline)
+	// Just ignore the escape sequence if it somehow reaches readline
+	editor.BindKey(keys.Code("\x1B[1;3A"), &readline.GoCommand{
+		Func: func(ctx context.Context, buffer *readline.Buffer) readline.Result {
+			// Do nothing - let tmux handle it
+			return readline.CONTINUE
+		},
+	})
+	// Alt+Down is handled by tmux binding only (not by readline)
+	// Just ignore the escape sequence if it somehow reaches readline
+	editor.BindKey(keys.Code("\x1B[1;3B"), &readline.GoCommand{
+		Func: func(ctx context.Context, buffer *readline.Buffer) readline.Result {
+			// Do nothing - let tmux handle it
+			return readline.CONTINUE
+		},
+	})
 	if initMessage != "" {
 		fmt.Printf("%s%s\n", c.manager.GetPrompt(), initMessage)
 		c.processInput(initMessage)
@@ -79,6 +127,7 @@ func (c *CLIInterface) Start(initMessage string) error {
 			continue
 		} else if err == io.EOF {
 			// Ctrl+D pressed, exit
+			c.cleanup()
 			return nil
 		} else if err != nil {
 			return err
@@ -103,6 +152,7 @@ func (c *CLIInterface) Start(initMessage string) error {
 		// Check for exit/quit commands (only if it's the entire line content)
 		trimmed := strings.TrimSpace(input)
 		if trimmed == "exit" || trimmed == "quit" {
+			c.cleanup()
 			return nil
 		}
 		if trimmed == "" {
@@ -115,9 +165,13 @@ func (c *CLIInterface) Start(initMessage string) error {
 
 // printWelcomeMessage prints a welcome message
 func (c *CLIInterface) printWelcomeMessage() {
-	fmt.Println()
 	fmt.Println("Type '/help' for a list of commands, '/exit' to quit")
-	fmt.Println()
+}
+
+// cleanup performs cleanup when exiting aiterm
+func (c *CLIInterface) cleanup() {
+	// Kill the exec pane and the tmux window will close
+	c.manager.CleanupPanes()
 }
 
 func (c *CLIInterface) processInput(input string) {

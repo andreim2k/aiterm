@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alvinunreal/tmuxai/logger"
-	"github.com/alvinunreal/tmuxai/system"
+	"github.com/andreim2k/aiterm/logger"
+	"github.com/andreim2k/aiterm/system"
 )
 
 // GetAvailablePane finds an available pane or creates a new one if none are available
@@ -30,8 +30,27 @@ func (m *Manager) InitExecPane() {
 	if availablePane.Id == "" {
 		_, _ = system.TmuxCreateNewPane(m.PaneId)
 		availablePane = m.GetAvailablePane()
+		// Swap panes so exec is on top, chat on bottom
+		_ = system.TmuxSwapPane(availablePane.Id, "-U")
+		// Resize chat pane to 10 lines
+		_ = system.TmuxResizePane(m.PaneId, 10)
 	}
 	m.ExecPane = &availablePane
+	// Set pane title to show shell type
+	shellName := m.ExecPane.CurrentCommand
+	if shellName == "" {
+		shellName = "shell"
+	}
+	_ = system.TmuxSetPaneTitle(m.ExecPane.Id, " " + shellName + " ")
+
+	// Set up Shift+Tab binding to switch between panes
+	_ = system.TmuxSetupPaneSwitchBinding(m.PaneId, m.ExecPane.Id)
+
+	// Set up Shift+Up and Shift+Down bindings to resize
+	_ = system.TmuxSetupPaneResizeBindings()
+	// Set up Alt+Up and Alt+Down bindings for scrolling
+	// Focus the aiterm pane by default
+	_ = system.TmuxSelectPane(m.PaneId)
 }
 
 func (m *Manager) PrepareExecPaneWithShell(shell string) {

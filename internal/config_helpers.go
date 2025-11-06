@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/alvinunreal/tmuxai/config"
+	"github.com/andreim2k/aiterm/config"
 )
 
 // AllowedConfigKeys defines the list of configuration keys that users are allowed to modify
@@ -170,6 +170,8 @@ func (m *Manager) GetModelsDefault() string {
 // SetModelsDefault sets the default model configuration for the current session
 func (m *Manager) SetModelsDefault(modelName string) {
 	m.SessionOverrides["default_model"] = modelName
+	// Update status bar with new model
+	m.updateStatusBar()
 }
 
 // GetAvailableModels returns a list of available model configuration names

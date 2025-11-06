@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/alvinunreal/tmuxai/config"
-	"github.com/alvinunreal/tmuxai/logger"
-	"github.com/alvinunreal/tmuxai/system"
+	"github.com/andreim2k/aiterm/config"
+	"github.com/andreim2k/aiterm/logger"
+	"github.com/andreim2k/aiterm/system"
 	"github.com/fatih/color"
 )
 
@@ -30,7 +29,7 @@ type CommandExecHistory struct {
 	Code    int
 }
 
-// Manager represents the TmuxAI manager agent
+// Manager represents the AITerm manager agent
 type Manager struct {
 	Config           *config.Config
 	AiClient         *AiClient
@@ -54,21 +53,22 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 
 	paneId, err := system.TmuxCurrentPaneId()
 	if err != nil {
-		// If we're not in a tmux session, start a new session and execute the same command
-		paneId, err = system.TmuxCreateSession()
-		if err != nil {
-			return nil, fmt.Errorf("system.TmuxCreateSession failed: %w", err)
-		}
+		// If we're not in a tmux session, exec into tmux directly to avoid background job
 		args := strings.Join(os.Args[1:], " ")
+		binaryName := os.Args[0]
 
-		_ = system.TmuxSendCommandToPane(paneId, "tmuxai "+args, true)
-		// shell initialization may take some time
-		time.Sleep(1 * time.Second)
-		_ = system.TmuxSendCommandToPane(paneId, "Enter", false)
-		err = system.TmuxAttachSession(paneId)
-		if err != nil {
-			return nil, fmt.Errorf("system.TmuxAttachSession failed: %w", err)
+		// Use syscall.Exec to replace current process with tmux
+		// This avoids creating a background job in the parent shell
+		tmuxCmd := []string{
+			"tmux", "new-session",
+			fmt.Sprintf("%s %s", binaryName, args),
 		}
+
+		err = system.TmuxExecSession(tmuxCmd)
+		if err != nil {
+			return nil, fmt.Errorf("system.TmuxExecSession failed: %w", err)
+		}
+		// This line should never be reached because exec replaces the process
 		os.Exit(0)
 	}
 
@@ -92,7 +92,16 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	manager.confirmedToExec = manager.confirmedToExecFn
 	manager.getTmuxPanesInXml = manager.getTmuxPanesInXmlFn
 
+	// Set up tmux styling
+	_ = system.TmuxSetupStyling()
+
 	manager.InitExecPane()
+
+	// Set chat pane title
+	_ = system.TmuxSetPaneTitle(paneId, " ai chat ")
+
+	// Update status bar with current model
+	manager.updateStatusBar()
 
 	// Auto-load knowledge bases from config
 	manager.autoLoadKBs()
@@ -124,10 +133,10 @@ func (m *Manager) GetConfig() *config.Config {
 
 // getPrompt returns the prompt string with color
 func (m *Manager) GetPrompt() string {
-	tmuxaiColor := color.New(color.FgGreen, color.Bold)
 	arrowColor := color.New(color.FgYellow, color.Bold)
 	stateColor := color.New(color.FgMagenta, color.Bold)
 	modelColor := color.New(color.FgCyan, color.Bold)
+doneColor := color.New(color.FgCyan, color.Bold)
 
 	var stateSymbol string
 	switch m.Status {
@@ -144,7 +153,7 @@ func (m *Manager) GetPrompt() string {
 		stateSymbol = "∞"
 	}
 
-	prompt := tmuxaiColor.Sprint("TmuxAI")
+	prompt := ""
 
 	// Show current model if it's not the default or first available model
 	currentModel := m.GetModelsDefault()
@@ -158,15 +167,53 @@ func (m *Manager) GetPrompt() string {
 
 		// Show model if current is different from expected
 		if currentModel != "" && currentModel != expectedModel {
-			prompt += " " + modelColor.Sprint("["+currentModel+"]")
+			prompt += modelColor.Sprint("["+currentModel+"]") + " "
 		}
 	}
 
-	if stateSymbol != "" {
-		prompt += " " + stateColor.Sprint("["+stateSymbol+"]")
+	if stateSymbol == "✓" {
+		prompt += doneColor.Sprint("["+stateSymbol+"]") + " "
+	} else if stateSymbol != "" {
+		prompt += stateColor.Sprint("["+stateSymbol+"]") + " "
 	}
-	prompt += arrowColor.Sprint(" » ")
+	prompt += arrowColor.Sprint("» ")
 	return prompt
+}
+
+// SwitchPane switches between the chat pane and exec pane
+func (m *Manager) SwitchPane() error {
+	return system.TmuxSwitchToOtherPane(m.PaneId, m.ExecPane.Id)
+}
+
+// updateStatusBar updates the tmux status bar with current model information
+func (m *Manager) updateStatusBar() {
+	modelName := m.GetModelsDefault()
+	provider := ""
+
+	if modelConfig, exists := m.GetCurrentModelConfig(); exists {
+		provider = modelConfig.Provider
+	}
+
+	if modelName == "" {
+		modelName = "default"
+	}
+	if provider == "" {
+		provider = "openrouter"
+	}
+
+	_ = system.TmuxUpdateStatusBar(modelName, provider)
+}
+
+// TogglePaneCollapse toggles between collapsed and expanded chat pane state
+func TogglePaneCollapse(chatPaneId, execPaneId string) error {
+	return system.TmuxTogglePaneCollapse(chatPaneId, execPaneId)
+}
+
+// CleanupPanes kills the exec pane when aiterm exits
+func (m *Manager) CleanupPanes() {
+	if m.ExecPane != nil && m.ExecPane.Id != "" {
+		_ = system.TmuxKillPane(m.ExecPane.Id)
+	}
 }
 
 func (ai *AIResponse) String() string {

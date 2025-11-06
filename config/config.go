@@ -131,7 +131,7 @@ func Load() (*Config, error) {
 	if err == nil {
 		viper.AddConfigPath(configDir)
 	} else {
-		viper.AddConfigPath(filepath.Join(homeDir, ".config", "tmuxai"))
+		viper.AddConfigPath(filepath.Join(homeDir, ".config", "aiterm"))
 	}
 
 	// Environment variables
@@ -183,14 +183,14 @@ func EnumerateConfigKeys(cfgType reflect.Type, prefix string) []string {
 	return keys
 }
 
-// GetConfigDir returns the path to the tmuxai config directory (~/.config/tmuxai)
+// GetConfigDir returns the path to the aiterm config directory (~/.config/aiterm)
 func GetConfigDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
-	configDir := filepath.Join(homeDir, ".config", "tmuxai")
+	configDir := filepath.Join(homeDir, ".config", "aiterm")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return "", fmt.Errorf("failed to create config directory: %w", err)
 	}
@@ -212,7 +212,7 @@ func GetKBDir() string {
 		return cfg.KnowledgeBase.Path
 	}
 
-	// Default to ~/.config/tmuxai/kb/
+	// Default to ~/.config/aiterm/kb/
 	configDir, _ := GetConfigDir()
 	kbDir := filepath.Join(configDir, "kb")
 
