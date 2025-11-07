@@ -91,16 +91,10 @@ func isTrue(s string) bool {
 	return s == "1" || s == "true"
 }
 
+// blankLinesRegex compiles the regex pattern for collapsing blank lines once at package level
+var blankLinesRegex = regexp.MustCompile(`\n{2,}`)
+
 // Collapse multiple blank lines to a single newline
 func collapseBlankLines(s string) string {
-	return mustCompile(`\n{2,}`).ReplaceAllString(s, "\n")
-}
-
-// mustCompile is a helper for regexp.MustCompile
-func mustCompile(expr string) *regexp.Regexp {
-	re, err := regexp.Compile(expr)
-	if err != nil {
-		panic(err)
-	}
-	return re
+	return blankLinesRegex.ReplaceAllString(s, "\n")
 }

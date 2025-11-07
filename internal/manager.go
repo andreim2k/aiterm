@@ -39,6 +39,7 @@ type Manager struct {
 	Messages         []ChatMessage
 	ExecHistory      []CommandExecHistory
 	WatchMode        bool
+	ShellMode        bool   // AI Shell mode (aish)
 	OS               string
 	SessionOverrides map[string]interface{} // session-only config overrides
 	LoadedKBs        map[string]string      // Loaded knowledge bases (name -> content)
@@ -49,7 +50,7 @@ type Manager struct {
 }
 
 // NewManager creates a new manager agent
-func NewManager(cfg *config.Config) (*Manager, error) {
+func NewManager(cfg *config.Config, shellMode bool) (*Manager, error) {
 
 	paneId, err := system.TmuxCurrentPaneId()
 	if err != nil {
@@ -81,6 +82,7 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		PaneId:           paneId,
 		Messages:         []ChatMessage{},
 		ExecPane:         &system.TmuxPaneDetails{},
+		ShellMode:        shellMode,
 		OS:               os,
 		SessionOverrides: make(map[string]interface{}),
 		LoadedKBs:        make(map[string]string),
@@ -95,10 +97,15 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	// Set up tmux styling
 	_ = system.TmuxSetupStyling()
 
-	manager.InitExecPane()
-
-	// Set chat pane title
-	_ = system.TmuxSetPaneTitle(paneId, " ai chat ")
+	// In shell mode, we don't create an exec pane
+	if !shellMode {
+		manager.InitExecPane()
+		// Set chat pane title
+		_ = system.TmuxSetPaneTitle(paneId, " ai chat ")
+	} else {
+		// In shell mode, set a different pane title
+		_ = system.TmuxSetPaneTitle(paneId, " ai shell ")
+	}
 
 	// Update status bar with current model
 	manager.updateStatusBar()
@@ -111,13 +118,21 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 
 // Start starts the manager agent
 func (m *Manager) Start(initMessage string) error {
-	cliInterface := NewCLIInterface(m)
-	if initMessage != "" {
-		logger.Info("Initial task provided: %s", initMessage)
-	}
-	if err := cliInterface.Start(initMessage); err != nil {
-		logger.Error("Failed to start CLI interface: %v", err)
-		return err
+	if m.ShellMode {
+		shellInterface := NewShellInterface(m)
+		if err := shellInterface.Start(); err != nil {
+			logger.Error("Failed to start Shell interface: %v", err)
+			return err
+		}
+	} else {
+		cliInterface := NewCLIInterface(m)
+		if initMessage != "" {
+			logger.Info("Initial task provided: %s", initMessage)
+		}
+		if err := cliInterface.Start(initMessage); err != nil {
+			logger.Error("Failed to start CLI interface: %v", err)
+			return err
+		}
 	}
 
 	return nil

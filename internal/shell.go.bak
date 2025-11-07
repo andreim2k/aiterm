@@ -1,0 +1,1019 @@
+package internal
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/andreim2k/aiterm/logger"
+)
+
+// ShellInterface provides an interactive shell with AI command translation
+type ShellInterface struct {
+	manager      *Manager
+	shell        string // bash, zsh, fish, etc.
+	promptScript string // cached script for generating prompt
+}
+
+// NewShellInterface creates a new shell interface
+func NewShellInterface(manager *Manager) *ShellInterface {
+	// Detect the user's shell
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
+	s := &ShellInterface{
+		manager: manager,
+		shell:   shell,
+	}
+
+	// Create the prompt generation script once
+	s.initPromptScript()
+
+	return s
+}
+
+// initPromptScript creates a reusable script for generating the prompt
+func (s *ShellInterface) initPromptScript() {
+	// Create a script that can be reused to generate the prompt
+	// Use -i for interactive mode to properly load Oh My Zsh
+	s.promptScript = `
+# Change to the target directory first
+cd "$1" 2>/dev/null
+
+# Generate prompt based on shell type
+if [ -n "$ZSH_VERSION" ]; then
+	# Load Oh My Zsh and other zsh configs
+	export ZSH_DISABLE_COMPFIX=true
+	[ -f ~/.zshrc ] && source ~/.zshrc 2>/dev/null
+
+	# Enable prompt expansion
+	setopt PROMPT_SUBST 2>/dev/null
+	setopt PROMPT_PERCENT 2>/dev/null
+
+	# Trigger any precmd hooks to update prompt
+	if typeset -f precmd >/dev/null 2>&1; then
+		precmd
+	fi
+
+	# Manually get git info using git commands
+	git_info=""
+	if git rev-parse --git-dir > /dev/null 2>&1; then
+		branch=$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --short HEAD 2>/dev/null)
+		if [ -n "$branch" ]; then
+			# Check for changes
+			if git diff --quiet 2>/dev/null; then
+				git_status=""
+			else
+				git_status=" ✗"
+			fi
+			git_info="git:($branch)$git_status"
+		fi
+	fi
+
+	# Get the base prompt without git info and add our own
+	if [ -n "$PROMPT" ]; then
+		# Use string replacement to remove the git_prompt_info call (including the space before it)
+		base_prompt=${PROMPT/' $(git_prompt_info)'/}
+		if [ -n "$git_info" ]; then
+			print -P "${base_prompt} ${git_info}"
+		else
+			print -P "${base_prompt}"
+		fi
+	elif [ -n "$PS1" ]; then
+		print -P "${PS1}"
+	fi
+elif [ -n "$BASH_VERSION" ]; then
+	[ -f ~/.bashrc ] && source ~/.bashrc 2>/dev/null
+	echo -n "$PS1"
+else
+	echo -n "$PS1"
+fi
+`
+}
+
+// Start starts the shell interface with AI command translation
+func (s *ShellInterface) Start() error {
+	// Create a wrapper script that adds AI translation to the real shell
+	wrapperPath, err := s.createShellWrapperScript()
+	if err != nil {
+		return fmt.Errorf("failed to create wrapper script: %w", err)
+	}
+	defer os.Remove(wrapperPath)
+
+	fmt.Println("AI Shell Mode (aish) - Press Ctrl+Space to translate natural language to commands")
+	fmt.Println("This is your real zsh with AI superpowers!")
+	fmt.Println()
+
+	// Run the actual shell with our wrapper
+	var cmd *exec.Cmd
+	if strings.Contains(s.shell, "zsh") {
+		// Use zsh and source our wrapper after the regular rc files
+		cmd = exec.Command(s.shell, "-c", fmt.Sprintf("source %s && exec zsh", wrapperPath))
+	} else {
+		cmd = exec.Command(s.shell)
+	}
+
+	cmd.Env = os.Environ()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Dir, _ = os.Getwd()
+
+	return cmd.Run()
+}
+
+// createShellWrapperScript creates a script that adds AI translation keybinding to the shell
+func (s *ShellInterface) createShellWrapperScript() (string, error) {
+	tmpDir := os.TempDir()
+
+	// Create wrapper based on shell type
+	if strings.Contains(s.shell, "zsh") {
+		// Create .zshrc wrapper
+		wrapperPath := filepath.Join(tmpDir, ".zshrc-aiterm")
+
+		// Source original zshrc first, then add our binding
+		homeDir, _ := os.UserHomeDir()
+		content := fmt.Sprintf(`# Source original zshrc
+[ -f %s/.zshrc ] && source %s/.zshrc
+
+# AI translation function
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+ai-translate-command() {
+	local current_buffer="$BUFFER"
+
+	if [ -z "$current_buffer" ]; then
+		return
+	fi
+
+	# Start translation in background
+	local tmpfile=$(mktemp)
+	(%s --ai-translate "$current_buffer" 2>/dev/null > $tmpfile) &
+	local job=$!
+
+	# Spinner animation
+	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+	local i=0
+	while kill -0 $job 2>/dev/null; do
+		BUFFER="$current_buffer ${spinner[i]}"
+		zle -R
+		i=$(( (i+1) % 10 ))
+		sleep 0.05
+	done
+
+	# Get result
+	local translated=$(cat $tmpfile)
+	rm $tmpfile
+
+	# Replace buffer with translated command
+	if [ -n "$translated" ]; then
+		BUFFER="$translated"
+		CURSOR=$#BUFFER
+	fi
+
+	# Redraw
+	zle reset-prompt
+}
+}
+
+# Register as a ZLE widget
+zle -N ai-translate-command
+
+# Bind to Ctrl+Space
+bindkey '\C- ' ai-translate-command
+`, homeDir, homeDir, os.Args[0])
+
+		return wrapperPath, os.WriteFile(wrapperPath, []byte(content), 0600)
+	}
+
+	// TODO: Add bash support
+	return "", fmt.Errorf("shell wrapper not implemented for %s yet", s.shell)
+}
+
+func TranslateNaturalLanguage(mgr *Manager, naturalLanguage string) (string, error) {
+	// Build AI prompt for command translation
+	shellPath := os.Getenv("SHELL")
+	if shellPath == "" {
+		shellPath = "/bin/bash"
+	}
+
+	cwd, _ := os.Getwd()
+	systemPrompt := fmt.Sprintf(`You are a shell command translator. Convert natural language to shell commands.
+
+Operating System: %s
+Shell: %s
+Current Directory: %s
+
+Rules:
+1. Output ONLY a single shell command, nothing else
+2. No explanations, no comments, no markdown
+3. Command should be safe and follow best practices
+
+Examples:
+Input: "list all files"
+Output: ls -la
+
+Input: "find python files"
+Output: find . -name "*.py"
+
+Respond with ONLY the command.`, mgr.OS, shellPath, cwd)
+
+	userPrompt := fmt.Sprintf("Translate: %s", naturalLanguage)
+
+	// Create chat messages
+	messages := []ChatMessage{
+		{Content: systemPrompt, FromUser: false},
+		{Content: userPrompt, FromUser: true},
+	}
+
+	// Call AI
+	ctx := context.Background()
+	response, err := mgr.AiClient.GetResponseFromChatMessages(ctx, messages, mgr.GetModel())
+	if err != nil {
+		return "", fmt.Errorf("failed to get AI response: %w", err)
+	}
+
+	// Clean up response
+	response = strings.TrimSpace(response)
+	response = strings.TrimPrefix(response, "```bash")
+	response = strings.TrimPrefix(response, "```sh")
+	response = strings.TrimPrefix(response, "```")
+	response = strings.TrimSuffix(response, "```")
+	response = strings.TrimSpace(response)
+
+	return response, nil
+}
+
+// getShellPrompt returns the shell prompt string by actually rendering it
+func (s *ShellInterface) getShellPrompt() string {
+	// Get current working directory
+	cwd, _ := os.Getwd()
+
+	// Run the prompt script with current directory as argument
+	cmd := exec.Command(s.shell, "-c", s.promptScript, s.shell, cwd)
+	cmd.Env = os.Environ()
+	cmd.Dir = cwd
+
+	// Capture both stdout and stderr for debugging
+	output, err := cmd.CombinedOutput()
+	if err == nil && len(output) > 0 {
+		prompt := string(output)
+		// Remove any trailing newlines but keep internal ones
+		prompt = strings.TrimRight(prompt, "\n\r")
+		if prompt != "" {
+			logger.Debug("Generated prompt: %q", prompt)
+			return prompt
+		}
+	}
+
+	// Log the error for debugging
+	if err != nil {
+		logger.Debug("Failed to get shell prompt: %v, output: %s", err, string(output))
+	}
+
+	// Fallback to simple prompt if we can't get the shell's prompt
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" && strings.HasPrefix(cwd, homeDir) {
+		cwd = "~" + strings.TrimPrefix(cwd, homeDir)
+	}
+
+	return fmt.Sprintf("\033[1;32m%s\033[0m $ ", cwd)
+}

@@ -71,10 +71,10 @@ func (p *TmuxPaneDetails) FormatInfo(f *InfoFormatter) string {
 	const labelWidth = 18
 
 	// Helper function for formatted key-value pairs
-	formatLine := func(key string, value any) {
+	formatLine := func(key string, value string) {
 		builder.WriteString(f.LabelColor.Sprintf("%-*s", labelWidth, key))
 		builder.WriteString("  ")
-		builder.WriteString(value.(string))
+		builder.WriteString(value)
 		builder.WriteString("\n")
 	}
 

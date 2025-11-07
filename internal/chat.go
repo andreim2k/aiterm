@@ -88,14 +88,6 @@ func (c *CLIInterface) Start(initMessage string) error {
 			return readline.CONTINUE
 		},
 	})
-	// Shift+Up is handled by tmux binding only (not by readline)
-	// Just ignore the escape sequence if it somehow reaches readline
-	editor.BindKey(keys.Code("\x1B[1;2A"), &readline.GoCommand{
-		Func: func(ctx context.Context, buffer *readline.Buffer) readline.Result {
-			// Do nothing - let tmux handle it
-			return readline.CONTINUE
-		},
-	})
 	// Alt+Up is handled by tmux binding only (not by readline)
 	// Just ignore the escape sequence if it somehow reaches readline
 	editor.BindKey(keys.Code("\x1B[1;3A"), &readline.GoCommand{

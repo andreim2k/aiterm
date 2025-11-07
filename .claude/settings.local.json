@@ -23,7 +23,17 @@
       "Bash(tmux resize-pane:*)",
       "Bash(tmux select-layout:*)",
       "Bash(tmux if-shell:*)",
-      "Bash(tmux unbind-key:*)"
+      "Bash(tmux unbind-key:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(./aiterm:*)",
+      "Bash(zsh -i -c 'echo \"\"PROMPT=$PROMPT\"\"')",
+      "Bash(zsh:*)",
+      "Bash(cp:*)",
+      "Bash(internal/shell.go)",
+      "Bash(echo:*)",
+      "Bash(cat:*)",
+      "Bash(tmux list-windows:*)"
     ],
     "deny": [],
     "ask": []

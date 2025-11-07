@@ -19,6 +19,8 @@ var (
 	kbFlag       string
 	modelFlag    string
 	togglePane   bool
+	shellMode    bool
+	aiTranslate  string
 )
 
 var rootCmd = &cobra.Command{
@@ -32,6 +34,30 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
+		// Handle AI translate flag (internal use by shell mode)
+		if aiTranslate != "" {
+			cfg, err := config.Load()
+			if err != nil {
+				logger.Error("Error loading configuration: %v", err)
+				os.Exit(1)
+			}
+
+			mgr, err := internal.NewManager(cfg, false)
+			if err != nil {
+				logger.Error("manager.NewManager failed: %v", err)
+				os.Exit(1)
+			}
+
+			translated, err := internal.TranslateNaturalLanguage(mgr, aiTranslate)
+			if err != nil {
+				logger.Error("Translation failed: %v", err)
+				os.Exit(1)
+			}
+
+			fmt.Print(translated)
+			os.Exit(0)
+		}
+
 		// Handle toggle-pane flag (hidden command for tmux binding)
 		if togglePane {
 			if len(args) != 2 {
@@ -69,7 +95,7 @@ var rootCmd = &cobra.Command{
 			logger.Info("Read request from file: %s", taskFileFlag)
 		}
 
-		mgr, err := internal.NewManager(cfg)
+		mgr, err := internal.NewManager(cfg, shellMode)
 		if err != nil {
 			logger.Error("manager.NewManager failed: %v", err)
 			os.Exit(1)
@@ -103,8 +129,11 @@ func init() {
 	rootCmd.Flags().StringVar(&kbFlag, "kb", "", "Comma-separated list of knowledge bases to load (e.g., --kb docker,git)")
 	rootCmd.Flags().StringVar(&modelFlag, "model", "", "AI model configuration to use (e.g., --model gpt4)")
 	rootCmd.Flags().BoolP("version", "v", false, "Print version information")
+	rootCmd.Flags().BoolVarP(&shellMode, "shell", "s", false, "Start in AI Shell mode (aish)")
+	rootCmd.Flags().StringVar(&aiTranslate, "ai-translate", "", "Translate natural language to command (internal use)")
 	rootCmd.Flags().BoolVar(&togglePane, "toggle-pane", false, "Toggle pane collapse (internal use)")
 	rootCmd.Flags().MarkHidden("toggle-pane")
+	rootCmd.Flags().MarkHidden("ai-translate")
 }
 
 func Execute() error {

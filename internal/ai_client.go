@@ -15,6 +15,11 @@ import (
 	"github.com/andreim2k/aiterm/logger"
 )
 
+const (
+	// DefaultHTTPTimeout is the default timeout for HTTP requests to AI APIs
+	DefaultHTTPTimeout = 60 * time.Second
+)
+
 // AiClient represents an AI client for interacting with OpenAI-compatible APIs including Azure OpenAI
 type AiClient struct {
 	config      *config.Config
@@ -112,7 +117,9 @@ type ResponseUsage struct {
 func NewAiClient(cfg *config.Config) *AiClient {
 	return &AiClient{
 		config: cfg,
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout: DefaultHTTPTimeout,
+		},
 	}
 }
 

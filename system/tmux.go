@@ -206,7 +206,7 @@ func TmuxClearPane(paneId string) error {
 		return err
 	}
 
-	cmd = exec.Command("tmux", "clear-vistory", "-t", paneId)
+	cmd = exec.Command("tmux", "clear-history", "-t", paneId)
 	if err := cmd.Run(); err != nil {
 		logger.Error("Failed to clear history for pane %s: %v", paneId, err)
 		return err

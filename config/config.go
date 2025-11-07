@@ -152,6 +152,13 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Validate config file permissions if a config file was found
+	if configFile := viper.ConfigFileUsed(); configFile != "" {
+		if err := validateConfigFilePermissions(configFile); err != nil {
+			return nil, fmt.Errorf("config file security check failed: %w", err)
+		}
+	}
+
 	if err := viper.Unmarshal(config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
@@ -305,4 +312,25 @@ func resolveEnvKeyReferenceInValue(val reflect.Value) {
 			resolveEnvKeyReferenceInValue(val.Elem())
 		}
 	}
+}
+
+// validateConfigFilePermissions checks that the config file has secure permissions.
+// The file should not be readable by group or others (permissions should be 0600 or stricter).
+func validateConfigFilePermissions(configPath string) error {
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat config file: %w", err)
+	}
+
+	mode := info.Mode().Perm()
+	// Check if group or others have any read/write/execute permissions (0077 mask)
+	if mode&0077 != 0 {
+		return fmt.Errorf(
+			"config file %s has insecure permissions: %v (should be 0600 or stricter). "+
+				"Fix with: chmod 600 %s",
+			configPath, mode, configPath,
+		)
+	}
+
+	return nil
 }
