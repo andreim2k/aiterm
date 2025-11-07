@@ -157,44 +157,29 @@ ai-translate-command() {
 		local NORMAL_COLOR=$'\033[0m'
 		local INSTRUCTIONS_COLOR=$'\033[0;36m'
 		
-		# Function to display selection menu
+		# Function to display selection menu - simplified, no mode switching
 		_aiterm_display_menu() {
-			# Temporarily restore terminal to cooked mode for display
-			# Use the global tty_fd if available, otherwise use /dev/tty directly
-			local tty_to_use=${_aiterm_tty_fd:-/dev/tty}
-			if [[ "$tty_to_use" =~ ^[0-9]+$ ]]; then
-				# It's a file descriptor number
-				local display_stty=$(stty -g <&$tty_to_use 2>/dev/null)
-				stty cooked echo <&$tty_to_use 2>/dev/null || true
-			else
-				# It's a path, open it
-				exec {local_fd}<>"$tty_to_use" 2>/dev/null || return
-				local display_stty=$(stty -g <&$local_fd 2>/dev/null)
-				stty cooked echo <&$local_fd 2>/dev/null || true
-			fi
-			
 			local i idx option_text
-			# Move cursor up to start of menu (max_options + 1 for instructions line)
-			printf "\033[${_aiterm_menu_lines}A" >&2
-			# Display each option
+			# Clear screen from current position up to menu start and redraw
+			# Use \r to go to beginning of line, then clear to end and redraw
+			for ((i=1; i<=_aiterm_menu_lines; i++)); do
+				echo -ne "\r\033[K" >&2
+				if [ $i -lt $_aiterm_menu_lines ]; then
+					echo -ne "\033[A" >&2
+				fi
+			done
+			
+			# Now redraw all options
 			for ((i=1; i<=_aiterm_max_options; i++)); do
 				idx=$((i-1))
 				option_text="${_aiterm_options[$idx]}"
 				if [ $i -eq $_aiterm_selected ]; then
-					printf "\033[2K${SELECTED_COLOR}➤ ${option_text}${NORMAL_COLOR}\r\n" >&2
+					echo -ne "${SELECTED_COLOR}➤ ${option_text}${NORMAL_COLOR}\r\n" >&2
 				else
-					printf "\033[2K  ${option_text}\r\n" >&2
+					echo -ne "  ${option_text}\r\n" >&2
 				fi
 			done
-			printf "\033[2K${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Esc/C: Cancel${NORMAL_COLOR}\r" >&2
-			
-			# Restore raw mode for key reading
-			if [[ "$tty_to_use" =~ ^[0-9]+$ ]]; then
-				stty -icanon -echo min 0 time 0 <&$tty_to_use 2>/dev/null || true
-			else
-				stty -icanon -echo min 0 time 0 <&$local_fd 2>/dev/null || true
-				exec {local_fd}<&-
-			fi
+			echo -ne "${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Esc/C: Cancel${NORMAL_COLOR}\r" >&2
 		}
 		
 		
@@ -211,61 +196,45 @@ ai-translate-command() {
 		done
 		echo "${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Esc/C: Cancel${NORMAL_COLOR}" >&2
 		
-		# Wait for selection by reading keys directly from terminal
-		# We need to read keys without zle interfering
-		local tty_fd
-		if ! exec {tty_fd}<>/dev/tty 2>/dev/null; then
-			# Fallback: use first option if we can't open terminal
-			BUFFER="${options[0]}"
-			CURSOR=${#BUFFER}
-			zle reset-prompt
-			return 0
-		fi
-		
-		# Store tty_fd globally so display function can access it
-		typeset -g _aiterm_tty_fd=$tty_fd
-		
-		# Save terminal state and set raw mode for key reading
-		# Use -icanon to disable canonical mode, but keep output working
-		local old_stty=$(stty -g <&$tty_fd 2>/dev/null)
-		# Set raw mode: disable echo and canonical mode, but allow output
-		stty -icanon -echo min 0 time 0 <&$tty_fd 2>/dev/null || {
-			# If stty fails, close fd and use first option
-			exec {tty_fd}<&-
-			BUFFER="${options[0]}"
-			CURSOR=${#BUFFER}
-			zle reset-prompt
-			return 0
-		}
-		
-		# Read keys until selection is done
+		# Wait for selection - use zsh's read -k reading from /dev/tty
+		# We'll read keys in a loop and update the display
 		while [ $_aiterm_selection_done -eq 0 ]; do
-			# Read a single byte (dd will block until data is available)
-			local key=$(dd bs=1 count=1 <&$tty_fd 2>/dev/null)
-			[ -z "$key" ] && continue
+			# Use read -k to read a single key from /dev/tty (non-blocking with timeout)
+			read -k 1 -t 0.1 key < /dev/tty 2>/dev/null || {
+				# Timeout - continue loop to check selection_done
+				continue
+			}
 			
 			case "$key" in
 				$'\e')
-					# Escape sequence - read next char
-					local key2=$(dd bs=1 count=1 <&$tty_fd 2>/dev/null)
+					# Escape sequence - read next char from /dev/tty
+					read -k 1 -t 0.1 key2 < /dev/tty 2>/dev/null || {
+						# Just Escape - cancel
+						_aiterm_selection_done=1
+						BUFFER="$_aiterm_current_buffer"
+						CURSOR=${#BUFFER}
+						break
+					}
 					if [ "$key2" = '[' ]; then
-						local key3=$(dd bs=1 count=1 <&$tty_fd 2>/dev/null)
+						read -k 1 -t 0.1 key3 < /dev/tty 2>/dev/null || break
 						case "$key3" in
 							'A') # Up arrow
 								if [ $_aiterm_selected -gt 1 ]; then
 									_aiterm_selected=$((_aiterm_selected - 1))
 									_aiterm_display_menu
+									zle -R  # Force zle to redraw
 								fi
 								;;
 							'B') # Down arrow
 								if [ $_aiterm_selected -lt $_aiterm_max_options ]; then
 									_aiterm_selected=$((_aiterm_selected + 1))
 									_aiterm_display_menu
+									zle -R  # Force zle to redraw
 								fi
 								;;
 						esac
 					else
-						# Just Escape - cancel
+						# Other escape - cancel
 						_aiterm_selection_done=1
 						BUFFER="$_aiterm_current_buffer"
 						CURSOR=${#BUFFER}
@@ -273,7 +242,7 @@ ai-translate-command() {
 					fi
 					;;
 				$'\n'|$'\r')
-					# Enter - accept selection
+					# Enter - accept
 					_aiterm_selection_done=1
 					local idx=$((_aiterm_selected-1))
 					BUFFER="${_aiterm_options[$idx]}"
@@ -281,14 +250,7 @@ ai-translate-command() {
 					break
 					;;
 				'c'|'C')
-					# Cancel with 'c'
-					_aiterm_selection_done=1
-					BUFFER="$_aiterm_current_buffer"
-					CURSOR=${#BUFFER}
-					break
-					;;
-				$'\x03')
-					# Ctrl+C - cancel
+					# Cancel
 					_aiterm_selection_done=1
 					BUFFER="$_aiterm_current_buffer"
 					CURSOR=${#BUFFER}
@@ -297,15 +259,8 @@ ai-translate-command() {
 			esac
 		done
 		
-		# Restore terminal state before clearing menu
-		stty "$old_stty" <&$tty_fd 2>/dev/null || true
-		exec {tty_fd}<&-
-		
 		# Clear menu from screen
 		echo -ne "\033[${_aiterm_menu_lines}A\033[J" >&2
-		
-		# Clean up global variables
-		unset _aiterm_options _aiterm_selected _aiterm_max_options _aiterm_current_buffer _aiterm_selection_done _aiterm_menu_lines _aiterm_tty_fd
 	else
 		# Single option - replace buffer directly
 		if [ -n "$translated" ]; then
