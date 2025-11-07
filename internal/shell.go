@@ -40,12 +40,14 @@ func (s *ShellInterface) Start() error {
 	}
 	defer os.RemoveAll(wrapperDir)
 
-	fmt.Println("AI Shell Mode (aish) - Press Ctrl+Space to translate natural language to commands")
+	fmt.Println("AI Shell Mode (aish) - Press Ctrl+X Ctrl+A to translate natural language to commands")
+	fmt.Println("Alternative bindings: Ctrl+Space or Alt+Space")
 	fmt.Println("This is your real zsh with AI superpowers!")
 	fmt.Println()
 
 	// Run the actual shell with our wrapper using ZDOTDIR
-	cmd := exec.Command("zsh")
+	// Ensure shell is interactive so .zshrc loads
+	cmd := exec.Command("zsh", "-i")
 	cmd.Env = append(os.Environ(), fmt.Sprintf("ZDOTDIR=%s", wrapperDir))
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -95,9 +97,6 @@ setopt ignore_eof
 
 # AI translation function
 ai-translate-command() {
-	# Debug output to verify function is called
-	# echo "AI translation function called" >&2
-	
 	# Disable job control notifications
 	setopt local_options no_notify no_monitor
 
@@ -140,162 +139,44 @@ ai-translate-command() {
 
 	# If we have multiple options, show selection interface
 	if [ ${#options[@]} -gt 1 ]; then
-		# Show options with selection interface
-		local selected=1
+		# Show options numbered for easy selection
 		local max_options=${#options[@]}
+		local i
 		
-		# Add Cancel option
-		options+=("Cancel (restore original text)")
-		max_options=${#options[@]}
-		
-		# ANSI color codes for better visual feedback
-		local SELECTED_COLOR=$'\033[1;32m'  # Bold green
-		local CANCEL_COLOR=$'\033[0;31m'    # Red
-		local NORMAL_COLOR=$'\033[0m'       # Reset to normal
-		local INSTRUCTIONS_COLOR=$'\033[0;36m'  # Cyan
-		local SELECTED_MARKER="➤"
-		local UNSELECTED_MARKER=" "
-		
-		# Function to clear and display options with selection marker
-		display_options() {
-			local i
-			# Move cursor up by max_options lines and clear from there
-			echo -ne "\033[${max_options}A\033[J"
-			for ((i=1; i<=max_options; i++)); do
-				if [ $i -eq $selected ]; then
-					if [ $i -eq $max_options ]; then
-						# Cancel option - show in red
-						echo "${CANCEL_COLOR}${SELECTED_MARKER} ${options[$((i-1))]}${NORMAL_COLOR}"
-					else
-						echo "${SELECTED_COLOR}${SELECTED_MARKER} ${options[$((i-1))]}${NORMAL_COLOR}"  # Selected option (bold green)
-					fi
-				else
-					if [ $i -eq $max_options ]; then
-						# Cancel option - show in red
-						echo "${CANCEL_COLOR}${UNSELECTED_MARKER} ${options[$((i-1))]}${NORMAL_COLOR}"
-					else
-						echo "${UNSELECTED_MARKER} ${options[$((i-1))]}"  # Unselected option
-					fi
-				fi
-			done
-			# Show instructions
-			echo "${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Number: Direct select  Q/Esc/Ctrl+C: Cancel${NORMAL_COLOR}"
-		}
-		
-		# Show options initially (with extra lines for spacing and instructions)
+		# Clear and show options
 		echo ""
 		for ((i=1; i<=max_options; i++)); do
-			if [ $i -eq $selected ]; then
-				if [ $i -eq $max_options ]; then
-					# Cancel option - show in red
-					echo "${CANCEL_COLOR}${SELECTED_MARKER} ${options[$((i-1))]}${NORMAL_COLOR}"
-				else
-					echo "${SELECTED_COLOR}${SELECTED_MARKER} ${options[$((i-1))]}${NORMAL_COLOR}"  # Selected option (bold green)
-				fi
-			else
-				if [ $i -eq $max_options ]; then
-					# Cancel option - show in red
-					echo "${CANCEL_COLOR}${UNSELECTED_MARKER} ${options[$((i-1))]}${NORMAL_COLOR}"
-				else
-					echo "${UNSELECTED_MARKER} ${options[$((i-1))]}"  # Unselected option
-				fi
-			done
+			echo "  $i) ${options[$((i-1))]}"
 		done
-		# Show instructions
-		echo "${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Number: Direct select  Q/Esc/Ctrl+C: Cancel${NORMAL_COLOR}"
+		echo "  0) Cancel (restore original text)"
+		echo ""
+		echo -n "Select option (0-$max_options, default: 1): "
 		
-		# Selection loop
-		while true; do
-			# Read input character
-			local key
-			read -k 1 key
-			
-			case "$key" in
-				$'\x1b')  # ESC sequence (arrow keys start with ESC)
-					# Try to read the rest of the escape sequence
-					local key2 key3
-					read -k 1 -t 0.01 key2 2>/dev/null || key2=""
-					if [ -n "$key2" ]; then
-						read -k 1 -t 0.01 key3 2>/dev/null || key3=""
-						if [ -n "$key3" ]; then
-							case "$key2$key3" in
-								'[A'|'OA')  # Up arrow (both ESC[A and ESCOA)
-									if [ $selected -gt 1 ]; then
-										selected=$((selected - 1))
-										display_options
-									fi
-									;;
-								'[B'|'OB')  # Down arrow (both ESC[B and ESCOB)
-									if [ $selected -lt $max_options ]; then
-										selected=$((selected + 1))
-										display_options
-									fi
-									;;
-							esac
-						fi
-					else
-						# ESC key alone - cancel and restore original text
-						BUFFER="$current_buffer"
-						CURSOR=${#BUFFER}
-						# Clear all options plus the extra lines
-						echo -ne "\033[$((max_options + 2))A\033[J"
-						break
-					fi
-					;;
-				'')  # Enter key
-					# Check if Cancel was selected
-					if [ $selected -eq $max_options ]; then
-						# Cancel - restore original buffer
-						BUFFER="$current_buffer"
-						CURSOR=${#BUFFER}
-					else
-						# Use selected option
-						BUFFER="${options[$((selected-1))]}"
-						CURSOR=${#BUFFER}
-					fi
-					# Clear all options plus the extra lines
-					echo -ne "\033[$((max_options + 2))A\033[J"
-					break
-					;;
-				'q'|'Q')  # Q key - cancel
-					# Restore original buffer
-					BUFFER="$current_buffer"
-					CURSOR=${#BUFFER}
-					# Clear all options plus the extra lines
-					echo -ne "\033[$((max_options + 2))A\033[J"
-					break
-					;;
-				$'\x03')  # Ctrl+C - cancel
-					# Restore original buffer
-					BUFFER="$current_buffer"
-					CURSOR=${#BUFFER}
-					# Clear all options plus the extra lines
-					echo -ne "\033[$((max_options + 2))A\033[J"
-					break
-					;;
-				[1-9])  # Number keys
-					# Direct selection by number (if valid)
-					local num=$(printf "%d" "'$key")
-					num=$((num - 48))  # Convert ASCII to number
-					if [ $num -lt $max_options ]; then
-						# Valid option (not Cancel)
-						selected=$num
-						BUFFER="${options[$((selected-1))]}"
-						CURSOR=${#BUFFER}
-						# Clear all options plus the extra lines
-						echo -ne "\033[$((max_options + 2))A\033[J"
-						break
-					elif [ $num -eq $max_options ]; then
-						# Cancel option
-						BUFFER="$current_buffer"
-						CURSOR=${#BUFFER}
-						# Clear all options plus the extra lines
-						echo -ne "\033[$((max_options + 2))A\033[J"
-						break
-					fi
-					;;
-			esac
-		done
+		# Read selection - use vared for better ZLE integration
+		local selection=""
+		# Temporarily disable ZLE to read input
+		zle -I
+		read -r selection < /dev/tty 2>/dev/null || read -r selection
+		
+		# Parse selection
+		local selected=${selection:-1}
+		if [ "$selected" = "0" ] || [ -z "$selected" ]; then
+			# Cancel or empty - restore original buffer
+			BUFFER="$current_buffer"
+			CURSOR=${#BUFFER}
+		elif [ "$selected" -ge 1 ] && [ "$selected" -le $max_options ]; then
+			# Valid selection
+			BUFFER="${options[$((selected-1))]}"
+			CURSOR=${#BUFFER}
+		else
+			# Invalid selection - use first option
+			BUFFER="${options[0]}"
+			CURSOR=${#BUFFER}
+		fi
+		
+		# Clear the selection prompt
+		local lines_to_clear=$((max_options + 4))
+		echo -ne "\033[${lines_to_clear}A\033[J"
 	else
 		# Single option - replace buffer directly
 		if [ -n "$translated" ]; then
@@ -314,28 +195,66 @@ ai-translate-command() {
 }
 
 # Register as a ZLE widget
-	echo "Registering ai-translate-command as ZLE widget" >&2
-	zle -N ai-translate-command
+zle -N ai-translate-command
 
-# Debug: Show that the function is loaded
-echo "AI Translate function loaded" >&2
+# Function to set up key bindings - must be called when ZLE is active
+setup-aiterm-bindings() {
+	# Only set up bindings once to avoid duplicate output
+	[ -n "$_aiterm_bindings_set" ] && return
+	_aiterm_bindings_set=1
+	
+	# Ensure keymaps are available
+	zmodload zsh/terminfo 2>/dev/null || true
+	
+	# Check if widget exists
+	if ! zle -l | grep -q "ai-translate-command"; then
+		return 1
+	fi
+	
+	# Bind to Ctrl+X then Ctrl+A (most reliable, works in most terminals)
+	bindkey '^X^A' ai-translate-command 2>/dev/null || true
+	
+	# Bind to Ctrl+Space (^@ is the control sequence for Ctrl+Space)
+	# Note: This may not work in all terminals
+	bindkey -M emacs '^@' ai-translate-command 2>/dev/null || true
+	bindkey -M viins '^@' ai-translate-command 2>/dev/null || true
+	bindkey -M vicmd '^@' ai-translate-command 2>/dev/null || true
+	bindkey '^@' ai-translate-command 2>/dev/null || true
+	
+	# Alternative binding: Alt+Space (more compatible)
+	bindkey '\e ' ai-translate-command 2>/dev/null || true
+}
 
-# Ensure keymaps are available
-zmodload zsh/terminfo 2>/dev/null || true
+# Use zsh's zle-line-init hook to set bindings when line editor initializes
+# This ensures bindings are set after user's zshrc loads and persist
+# Check if user already has zle-line-init and preserve it
+if typeset -f zle-line-init > /dev/null 2>&1; then
+	# User has zle-line-init, wrap it properly
+	_aiterm_original_zle_line_init=$(functions zle-line-init)
+	_aiterm_zle_line_init_wrapper() {
+		eval "$_aiterm_original_zle_line_init"
+		setup-aiterm-bindings
+	}
+	zle -N zle-line-init _aiterm_zle_line_init_wrapper
+else
+	# No existing zle-line-init, create our own
+	zle-line-init() {
+		setup-aiterm-bindings
+	}
+	zle -N zle-line-init
+fi
 
-# Bind to Ctrl+Space (^@ is the control sequence for Ctrl+Space)
-	# This is the recommended primary binding
-	echo "Binding Ctrl+Space to ai-translate-command" >&2
-	bindkey -M emacs '^@' ai-translate-command
-	bindkey -M viins '^@' ai-translate-command
-	bindkey -M vicmd '^@' ai-translate-command
+# Also set up bindings immediately (for first prompt)
+setup-aiterm-bindings
 
-	# Also try alternative bindings for better compatibility
-	bindkey '^@' ai-translate-command
-
-	# Alternative binding for tmux compatibility: Ctrl+X then Ctrl+A
-	echo "Binding Ctrl+X Ctrl+A to ai-translate-command" >&2
-	bindkey '^X^A' ai-translate-command
+# Use precmd hook as backup to ensure bindings are set (only once)
+autoload -Uz add-zsh-hook
+aiterm-setup-bindings-hook() {
+	setup-aiterm-bindings
+	# Remove hook after first run
+	add-zsh-hook -d precmd aiterm-setup-bindings-hook
+}
+add-zsh-hook precmd aiterm-setup-bindings-hook
 
 # Note: Ctrl+Tab is often intercepted by terminal emulators and may not work
 # Uncomment the following line if your terminal supports it:
