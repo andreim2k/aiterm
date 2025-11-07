@@ -15,13 +15,14 @@ import (
 )
 
 var (
-	initMessage  string
-	taskFileFlag string
-	kbFlag       string
-	modelFlag    string
-	togglePane   bool
-	shellMode    bool
-	aiTranslate  string
+	initMessage         string
+	taskFileFlag        string
+	kbFlag              string
+	modelFlag           string
+	togglePane          bool
+	shellMode           bool
+	aiTranslate         string
+	aiTranslateMultiple int
 )
 
 var rootCmd = &cobra.Command{
@@ -35,6 +36,59 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
+		// Handle AI translate multiple flag (internal use by shell mode)
+		if aiTranslateMultiple > 0 {
+			cfg, err := config.Load()
+			if err != nil {
+				logger.Error("Error loading configuration: %v", err)
+				os.Exit(1)
+			}
+
+			// Create a minimal manager for translation to ensure proper configuration
+			mgr, err := internal.NewManagerForTranslation(cfg)
+			if err != nil {
+				logger.Error("Failed to create manager: %v", err)
+				fmt.Fprintf(os.Stderr, "Failed to create manager: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Get system information
+			osName := system.GetOSDetails()
+			shellPath := os.Getenv("SHELL")
+			if shellPath == "" {
+				shellPath = "/bin/bash"
+			}
+			cwd, _ := os.Getwd()
+
+			// Get model configuration
+			model := mgr.GetModelsDefault()
+			if model == "" {
+				model = "gpt-4o-mini"
+			}
+
+			// Get the natural language input from aiTranslate or args
+			naturalLanguage := aiTranslate
+			if naturalLanguage == "" && len(args) > 0 {
+				naturalLanguage = strings.Join(args, " ")
+			}
+
+			options, err := mgr.AiClient.TranslateNaturalLanguageMultiple(naturalLanguage, osName, shellPath, cwd, model, aiTranslateMultiple)
+			if err != nil {
+				logger.Error("Translation failed: %v", err)
+				fmt.Fprintf(os.Stderr, "Translation error: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Output options separated by newlines
+			for i, option := range options {
+				if i > 0 {
+					fmt.Print("\n")
+				}
+				fmt.Print(option)
+			}
+			os.Exit(0)
+		}
+
 		// Handle AI translate flag (internal use by shell mode)
 		if aiTranslate != "" {
 			cfg, err := config.Load()
@@ -149,9 +203,11 @@ func init() {
 	rootCmd.Flags().BoolP("version", "v", false, "Print version information")
 	rootCmd.Flags().BoolVarP(&shellMode, "shell", "s", false, "Start in AI Shell mode (aish)")
 	rootCmd.Flags().StringVar(&aiTranslate, "ai-translate", "", "Translate natural language to command (internal use)")
+	rootCmd.Flags().IntVar(&aiTranslateMultiple, "ai-translate-multiple", 0, "Translate natural language to multiple commands (internal use)")
 	rootCmd.Flags().BoolVar(&togglePane, "toggle-pane", false, "Toggle pane collapse (internal use)")
 	rootCmd.Flags().MarkHidden("toggle-pane")
 	rootCmd.Flags().MarkHidden("ai-translate")
+	rootCmd.Flags().MarkHidden("ai-translate-multiple")
 }
 
 func Execute() error {

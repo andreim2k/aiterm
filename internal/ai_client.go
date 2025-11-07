@@ -643,3 +643,123 @@ Respond with ONLY the command.`, osName, shellPath, cwd)
 
 	return response, nil
 }
+
+// TranslateNaturalLanguageMultiple generates multiple shell command options from natural language
+func (c *AiClient) TranslateNaturalLanguageMultiple(naturalLanguage string, osName string, shellPath string, cwd string, model string, count int) ([]string, error) {
+	// Build AI prompt for command translation with multiple options
+	if shellPath == "" {
+		shellPath = "/bin/bash"
+	}
+
+	systemPrompt := `You are a shell command translator. Convert natural language tasks to multiple DIFFERENT shell command options.
+
+Rules:
+1. Output as many DIFFERENT and VALID shell commands as you can think of, one per line
+2. Number each option (1., 2., 3., etc.)
+3. No explanations, no comments, no markdown
+4. Each command should be safe and follow best practices
+5. Each option should be a valid, DIFFERENT approach to accomplish the EXACT task
+6. Focus on quality over quantity - only include commands that are truly different approaches
+
+Examples:
+Task: "list all files"
+1. ls -la
+2. find . -type f
+3. tree -a
+4. ls -R
+
+Task: "find python files"
+1. find . -name "*.py"
+2. grep -r "\.py$" .
+3. ls *.py
+4. locate "*.py"
+
+Respond with as many DIFFERENT and VALID commands that directly accomplish the requested task, one per line.`
+
+	userPrompt := fmt.Sprintf("Task: %s\n\nProvide as many different and valid shell commands as you can to accomplish this task.", naturalLanguage)
+
+	// Create chat messages
+	aiMessages := []Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	// Call AI
+	ctx := context.Background()
+
+	// Determine which API to use
+	apiType := c.determineAPIType(model)
+
+	// Get the actual model identifier if we have a config manager
+	actualModel := model
+	if c.configMgr != nil {
+		if modelConfig, exists := c.configMgr.GetModelConfig(model); exists {
+			// Use the model as specified in the configuration
+			actualModel = modelConfig.Model
+		}
+	}
+
+	// Route to appropriate API
+	var response string
+	var err error
+
+	switch apiType {
+	case "responses":
+		response, err = c.Response(ctx, aiMessages, actualModel)
+	case "azure":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "openrouter":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "requesty":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "zai":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "xai":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "alibaba":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	default:
+		return nil, fmt.Errorf("unknown API type: %s", apiType)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("AI API call failed: %v", err)
+	}
+
+	// Parse the response into multiple options
+	response = strings.TrimSpace(response)
+	lines := strings.Split(response, "\n")
+
+	var options []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+		// Remove numbering if present (e.g., "1. ", "2. ", etc.)
+		if len(line) > 2 && line[1] == '.' && line[0] >= '1' && line[0] <= '9' {
+			line = strings.TrimSpace(line[2:])
+		} else if len(line) > 3 && line[2] == '.' && line[0] >= '1' && line[0] <= '9' && line[1] >= '0' && line[1] <= '9' {
+			line = strings.TrimSpace(line[3:])
+		}
+		// Remove any code block markers
+		line = strings.TrimPrefix(line, "```bash")
+		line = strings.TrimPrefix(line, "```sh")
+		line = strings.TrimPrefix(line, "```")
+		line = strings.TrimSuffix(line, "```")
+		line = strings.TrimSpace(line)
+
+		// Only add non-empty lines that look like commands
+		if line != "" && !strings.HasPrefix(line, "Input:") && !strings.HasPrefix(line, "Output:") && !strings.HasPrefix(line, "Examples:") {
+			options = append(options, line)
+		}
+	}
+
+	// Ensure we have the requested number of options (or at least one)
+	if len(options) == 0 {
+		return nil, fmt.Errorf("no valid command options generated")
+	}
+
+	return options, nil
+}
