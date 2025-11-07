@@ -652,32 +652,46 @@ func (c *AiClient) TranslateNaturalLanguageMultiple(naturalLanguage string, osNa
 		shellPath = "/bin/bash"
 	}
 
-	systemPrompt := `You are a shell command translator. Convert natural language tasks to multiple DIFFERENT shell command options.
+	systemPrompt := `You are a Linux shell command generator. Output ONLY the most commonly used Linux shell commands.
 
-Rules:
-1. Output as many DIFFERENT and VALID shell commands as you can think of, one per line
-2. NO numbering, NO prefixes, just the command itself
-3. No explanations, no comments, no markdown
-4. Each command should be safe and follow best practices
-5. Each option should be a valid, DIFFERENT approach to accomplish the EXACT task
-6. Focus on quality over quantity - only include commands that are truly different approaches
+ABSOLUTE REQUIREMENTS:
+1. Output ONLY the 5 MOST COMMONLY USED Linux shell commands for the given task
+2. One command per line - NO text, NO explanations, NO comments, NO markdown, NO numbering
+3. NO prefixes like "1.", "1)", "Command:", etc.
+4. NO sentences, NO phrases, NO words - ONLY commands
+5. Prioritize the most frequently used commands that users would typically choose
+6. Each line must be a valid, executable Linux command
+7. If you cannot provide valid commands, output NOTHING
 
-Examples:
+VALID COMMAND FORMAT:
+- Starts with a command name (ls, find, grep, etc.)
+- May contain options, arguments, pipes, redirects
+- Must be executable as-is
+
+INVALID (DO NOT OUTPUT):
+- "Here are some commands:"
+- "You can use: ls -la"
+- "1. ls -la"
+- Any explanatory text
+
+VALID EXAMPLES:
 Task: "list all files"
 ls -la
+ls -l
+ls
 find . -type f
-tree -a
-ls -R
+tree
 
 Task: "find python files"
 find . -name "*.py"
 grep -r "\.py$" .
 ls *.py
 locate "*.py"
+fd "*.py"
 
-Respond with as many DIFFERENT and VALID commands that directly accomplish the requested task, one per line. NO numbering, NO prefixes.`
+Output ONLY the 5 most commonly used commands. If no valid commands, output NOTHING.`
 
-	userPrompt := fmt.Sprintf("Task: %s\n\nProvide as many different and valid shell commands as you can to accomplish this task.", naturalLanguage)
+	userPrompt := fmt.Sprintf("Task: %s\n\nProvide ONLY the 5 most commonly used Linux shell commands for this task. Output one command per line, nothing else.", naturalLanguage)
 
 	// Create chat messages
 	aiMessages := []Message{
@@ -759,16 +773,110 @@ Respond with as many DIFFERENT and VALID commands that directly accomplish the r
 		line = strings.TrimSuffix(line, "```")
 		line = strings.TrimSpace(line)
 
-		// Only add non-empty lines that look like commands
-		// Skip lines that are just numbers or numbers with separators
-		if line != "" && !regexp.MustCompile(`^\d+[.)]?\s*$`).MatchString(line) && !strings.HasPrefix(line, "Input:") && !strings.HasPrefix(line, "Output:") && !strings.HasPrefix(line, "Examples:") {
-			options = append(options, line)
+		// STRICT FILTERING: Only accept lines that are valid Linux commands
+		// Reject anything that looks like text, explanations, or comments
+		
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+		
+		// Skip if it contains common explanatory phrases (anywhere in the line)
+		explanatoryPatterns := []string{
+			"Input:", "Output:", "Examples:", "Task:", "Rules:", "CRITICAL",
+			"I notice", "I'll", "Here are", "You can", "This will", "Note:",
+			"Warning:", "Error:", "Tip:", "Remember:", "provide", "accomplish",
+			"interpret", "appears", "typo", "will interpret", "as", "and provide",
+			"commands to", "display", "content", "information", "notice the",
+			"appears to have", "interpret this", "show me", "more", "less",
+		}
+		hasExplanatoryText := false
+		lowerLine := strings.ToLower(line)
+		for _, pattern := range explanatoryPatterns {
+			if strings.Contains(lowerLine, strings.ToLower(pattern)) {
+				hasExplanatoryText = true
+				break
+			}
+		}
+		
+		// Also skip lines that look like sentences (contain multiple common words that aren't command-related)
+		// Check for patterns like "I'll interpret this as:" or "Here are commands:"
+		if regexp.MustCompile(`(I|I'll|I will|Here|This|These|The|A|An)\s+(notice|will|can|are|is|was|were)`).MatchString(lowerLine) {
+			hasExplanatoryText = true
+		}
+		
+		// Skip lines that start with "I notice" or similar patterns
+		if regexp.MustCompile(`^I\s+(notice|will|can|interpret)`).MatchString(lowerLine) {
+			hasExplanatoryText = true
+		}
+		
+		// Skip lines containing "appears to have" or "interpret this as"
+		if regexp.MustCompile(`(appears to have|interpret this as|and provide commands)`).MatchString(lowerLine) {
+			hasExplanatoryText = true
+		}
+		
+		// Skip lines that contain colons followed by explanatory text (like "Task: show me")
+		if regexp.MustCompile(`:\s+[A-Z]`).MatchString(line) && len(line) > 50 {
+			hasExplanatoryText = true
+		}
+		
+		if hasExplanatoryText {
+			continue
+		}
+		
+		// Skip if it's just numbers/punctuation
+		if regexp.MustCompile(`^\d+[.)]?\s*$`).MatchString(line) {
+			continue
+		}
+		
+		// Skip if line is too long (commands are rarely > 150 chars)
+		if len(line) > 150 {
+			continue
+		}
+		
+		// STRICT: Must start with a valid command name (letters, no spaces before)
+		// Valid commands start with: letter, then may have letters/numbers/dashes/underscores
+		// Then may have space, options, arguments, pipes, redirects, etc.
+		commandPattern := regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*(\s|$|>|<|\||&|;)`)
+		if !commandPattern.MatchString(line) {
+			continue
+		}
+		
+		// Additional validation: must contain at least one space or be a single-word command
+		// and must not be just punctuation or special chars
+		if !regexp.MustCompile(`[a-zA-Z0-9]`).MatchString(line) {
+			continue
+		}
+		
+		// If we get here, it's likely a valid command
+		options = append(options, line)
+		
+		// Limit to maximum 5 commands
+		if len(options) >= 5 {
+			break
 		}
 	}
 
-	// Ensure we have the requested number of options (or at least one)
+	// Deduplicate options (case-insensitive, but preserve original case)
+	seen := make(map[string]bool)
+	var uniqueOptions []string
+	for _, opt := range options {
+		lower := strings.ToLower(strings.TrimSpace(opt))
+		if !seen[lower] {
+			seen[lower] = true
+			uniqueOptions = append(uniqueOptions, opt)
+			// Limit to maximum 5 unique commands
+			if len(uniqueOptions) >= 5 {
+				break
+			}
+		}
+	}
+	options = uniqueOptions
+
+	// If no valid commands found, return empty slice (not an error)
+	// The shell script will handle empty results gracefully
 	if len(options) == 0 {
-		return nil, fmt.Errorf("no valid command options generated")
+		return []string{}, nil
 	}
 
 	return options, nil

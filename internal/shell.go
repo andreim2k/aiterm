@@ -106,20 +106,26 @@ ai-translate-command() {
 		return
 	fi
 
-	# Start translation in background for multiple options
+	# Start translation in background for multiple options (max 5 most common commands)
 	local tmpfile=$(mktemp)
-	%s --ai-translate-multiple 10 "$current_buffer" < /dev/null > "$tmpfile" 2>&1 &
+	%s --ai-translate-multiple 5 "$current_buffer" < /dev/null > "$tmpfile" 2>&1 &
 	local job=$!
 
-	# Spinner animation with braille characters
+	# Spinner animation with braille characters - display at cursor position
 	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 	local i=0
+	# Display spinner at cursor position (where user left it)
 	while kill -0 $job 2>/dev/null; do
 		BUFFER="$current_buffer ${spinner[i]}"
+		CURSOR=${#BUFFER}
 		zle -R
 		i=$(( (i+1) %% 10 ))
 		sleep 0.05 || true
 	done
+	# Clear spinner - restore to original buffer
+	BUFFER="$current_buffer"
+	CURSOR=${#BUFFER}
+	zle -R
 
 	# Wait for job to complete
 	wait $job 2>/dev/null || true
@@ -138,11 +144,23 @@ ai-translate-command() {
 		# Skip empty lines or lines that are just numbers/punctuation
 		if [ -n "$line" ] && ! echo "$line" | grep -qE '^[0-9]+[.)]?[[:space:]]*$'; then
 			options+=("$line")
+			# Limit to maximum 5 commands
+			if [ ${#options[@]} -ge 5 ]; then
+				break
+			fi
 		fi
 	done <<< "$translated"
 
-	# If we have multiple options, show selection interface with arrow key navigation
-	if [ ${#options[@]} -gt 1 ]; then
+	# Handle different cases: 0 options (do nothing), 1 option (use directly), multiple options (show menu)
+	if [ ${#options[@]} -eq 0 ]; then
+		# No valid commands found - keep original buffer, do nothing
+		BUFFER="$current_buffer"
+		CURSOR=${#BUFFER}
+	elif [ ${#options[@]} -eq 1 ]; then
+		# Single option - use it directly
+		BUFFER="${options[0]}"
+		CURSOR=${#BUFFER}
+	elif [ ${#options[@]} -gt 1 ]; then
 		local max_options=${#options[@]}
 		
 		# Store options and state in global variables for widget access
@@ -157,34 +175,41 @@ ai-translate-command() {
 		local NORMAL_COLOR=$'\033[0m'
 		local INSTRUCTIONS_COLOR=$'\033[0;36m'
 		
-		# Function to display selection menu - simplified, no mode switching
+		# Save original cursor position BEFORE displaying menu (where user's prompt cursor was)
+		# Use \033[s which might support a stack better than DECSC
+		echo -ne "\033[s" >&2  # Save original cursor position
+		
+		# Function to display selection menu - redraw smoothly
 		_aiterm_display_menu() {
 			local i idx option_text
-			# Clear screen from current position up to menu start and redraw
-			# Use \r to go to beginning of line, then clear to end and redraw
-			for ((i=1; i<=_aiterm_menu_lines; i++)); do
-				echo -ne "\r\033[K" >&2
-				if [ $i -lt $_aiterm_menu_lines ]; then
-					echo -ne "\033[A" >&2
-				fi
-			done
-			
-			# Now redraw all options
+			# Restore to menu start position (saved after prompt, before first option)
+			echo -ne "\033[u" >&2  # Restore to menu start
+			# Clear from cursor to end of screen (clears menu area)
+			echo -ne "\033[J" >&2
+			# Display each option starting from current cursor position
 			for ((i=1; i<=_aiterm_max_options; i++)); do
 				idx=$((i-1))
 				option_text="${_aiterm_options[$idx]}"
+				# Clear entire line and write content
 				if [ $i -eq $_aiterm_selected ]; then
-					echo -ne "${SELECTED_COLOR}➤ ${option_text}${NORMAL_COLOR}\r\n" >&2
+					echo -ne "\033[2K${SELECTED_COLOR}➤ ${option_text}${NORMAL_COLOR}\r\n" >&2
 				else
-					echo -ne "  ${option_text}\r\n" >&2
+					echo -ne "\033[2K  ${option_text}\r\n" >&2
 				fi
 			done
-			echo -ne "${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Esc/C: Cancel${NORMAL_COLOR}\r" >&2
+			# Instructions line
+			echo -ne "\033[2K${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Esc/C: Cancel${NORMAL_COLOR}\r" >&2
 		}
 		
-		
-		# Initial display
-		echo "" >&2
+		# Initial display - show menu below current position (no blank line)
+		# Update prompt with first selected command (just the command text, no ➤)
+		BUFFER="${options[0]}"
+		CURSOR=${#BUFFER}
+		# Just redraw without resetting prompt (avoids duplicate prompts)
+		zle -R
+		# Save menu start position (before first option) for redraws
+		# The menu will be displayed below the prompt
+		echo -ne "\033[s" >&2  # Save menu start position
 		for ((i=1; i<=max_options; i++)); do
 			idx=$((i-1))
 			option_text="${options[$idx]}"
@@ -221,15 +246,27 @@ ai-translate-command() {
 							'A') # Up arrow
 								if [ $_aiterm_selected -gt 1 ]; then
 									_aiterm_selected=$((_aiterm_selected - 1))
+									# Update prompt with currently selected command (just the command, no ➤)
+									local idx=$((_aiterm_selected - 1))
+									BUFFER="${_aiterm_options[$idx]}"
+									CURSOR=${#BUFFER}
+									# Update menu display
 									_aiterm_display_menu
-									zle -R  # Force zle to redraw
+									# Update prompt with new BUFFER (don't reset, just redraw)
+									zle -R
 								fi
 								;;
 							'B') # Down arrow
 								if [ $_aiterm_selected -lt $_aiterm_max_options ]; then
 									_aiterm_selected=$((_aiterm_selected + 1))
+									# Update prompt with currently selected command (just the command, no ➤)
+									local idx=$((_aiterm_selected - 1))
+									BUFFER="${_aiterm_options[$idx]}"
+									CURSOR=${#BUFFER}
+									# Update menu display
 									_aiterm_display_menu
-									zle -R  # Force zle to redraw
+									# Update prompt with new BUFFER (don't reset, just redraw)
+									zle -R
 								fi
 								;;
 						esac
@@ -259,22 +296,21 @@ ai-translate-command() {
 			esac
 		done
 		
-		# Clear menu from screen
-		echo -ne "\033[${_aiterm_menu_lines}A\033[J" >&2
-	else
-		# Single option - replace buffer directly
-		if [ -n "$translated" ]; then
-			BUFFER="$translated"
-			CURSOR=${#BUFFER}
-		else
-			# Restore original if translation failed
-			BUFFER="$current_buffer"
-			CURSOR=${#BUFFER}
-		fi
+		# Clear menu - prompt already shows the selected command
+		# Calculate lines to clear: max_options + 1 (instructions, no blank line)
+		local clear_lines=$((_aiterm_max_options + 1))
+		echo -ne "\033[${clear_lines}A" >&2  # Move up to menu start
+		# Clear only the menu lines
+		for ((i=0; i<clear_lines; i++)); do
+			echo -ne "\033[2K\r" >&2
+			if [ $i -lt $((clear_lines - 1)) ]; then
+				echo -ne "\n" >&2
+			fi
+		done
 	fi
 
-	# Redraw
-	zle reset-prompt
+	# Redraw - prompt already has the correct command (use -R to avoid duplicate)
+	zle -R
 	return 0
 }
 
