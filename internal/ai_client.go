@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -655,7 +656,7 @@ func (c *AiClient) TranslateNaturalLanguageMultiple(naturalLanguage string, osNa
 
 Rules:
 1. Output as many DIFFERENT and VALID shell commands as you can think of, one per line
-2. Number each option (1., 2., 3., etc.)
+2. NO numbering, NO prefixes, just the command itself
 3. No explanations, no comments, no markdown
 4. Each command should be safe and follow best practices
 5. Each option should be a valid, DIFFERENT approach to accomplish the EXACT task
@@ -663,18 +664,18 @@ Rules:
 
 Examples:
 Task: "list all files"
-1. ls -la
-2. find . -type f
-3. tree -a
-4. ls -R
+ls -la
+find . -type f
+tree -a
+ls -R
 
 Task: "find python files"
-1. find . -name "*.py"
-2. grep -r "\.py$" .
-3. ls *.py
-4. locate "*.py"
+find . -name "*.py"
+grep -r "\.py$" .
+ls *.py
+locate "*.py"
 
-Respond with as many DIFFERENT and VALID commands that directly accomplish the requested task, one per line.`
+Respond with as many DIFFERENT and VALID commands that directly accomplish the requested task, one per line. NO numbering, NO prefixes.`
 
 	userPrompt := fmt.Sprintf("Task: %s\n\nProvide as many different and valid shell commands as you can to accomplish this task.", naturalLanguage)
 
@@ -730,6 +731,10 @@ Respond with as many DIFFERENT and VALID commands that directly accomplish the r
 	response = strings.TrimSpace(response)
 	lines := strings.Split(response, "\n")
 
+	// Regex to match leading numbers with various separators: "1. ", "1) ", "10. ", "10) ", "1)", "1.", etc.
+	// Match: digits followed by . or ) optionally followed by space
+	numberPrefixRegex := regexp.MustCompile(`^\s*\d+[.)]\s*`)
+
 	var options []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -737,11 +742,15 @@ Respond with as many DIFFERENT and VALID commands that directly accomplish the r
 		if line == "" {
 			continue
 		}
-		// Remove numbering if present (e.g., "1. ", "2. ", etc.)
-		if len(line) > 2 && line[1] == '.' && line[0] >= '1' && line[0] <= '9' {
-			line = strings.TrimSpace(line[2:])
-		} else if len(line) > 3 && line[2] == '.' && line[0] >= '1' && line[0] <= '9' && line[1] >= '0' && line[1] <= '9' {
-			line = strings.TrimSpace(line[3:])
+		// Remove numbering patterns using regex - be aggressive
+		line = numberPrefixRegex.ReplaceAllString(line, "")
+		// Also try to remove standalone numbers at start (like "1)" or "1.")
+		line = regexp.MustCompile(`^\d+[.)]\s*`).ReplaceAllString(line, "")
+		line = strings.TrimSpace(line)
+		
+		// If we removed everything, skip this line
+		if line == "" {
+			continue
 		}
 		// Remove any code block markers
 		line = strings.TrimPrefix(line, "```bash")
@@ -751,7 +760,8 @@ Respond with as many DIFFERENT and VALID commands that directly accomplish the r
 		line = strings.TrimSpace(line)
 
 		// Only add non-empty lines that look like commands
-		if line != "" && !strings.HasPrefix(line, "Input:") && !strings.HasPrefix(line, "Output:") && !strings.HasPrefix(line, "Examples:") {
+		// Skip lines that are just numbers or numbers with separators
+		if line != "" && !regexp.MustCompile(`^\d+[.)]?\s*$`).MatchString(line) && !strings.HasPrefix(line, "Input:") && !strings.HasPrefix(line, "Output:") && !strings.HasPrefix(line, "Examples:") {
 			options = append(options, line)
 		}
 	}

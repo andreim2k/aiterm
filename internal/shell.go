@@ -130,53 +130,182 @@ ai-translate-command() {
 
 	# Parse multiple options (separated by newlines)
 	local -a options
-	local index=1
 	while IFS= read -r line; do
-		if [ -n "$line" ]; then
+		# Remove leading numbers with various formats: "1. ", "1) ", "1)", "1.", etc.
+		line=$(echo "$line" | sed -E 's/^[[:space:]]*[0-9]+[.)][[:space:]]*//')
+		# Trim whitespace
+		line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		# Skip empty lines or lines that are just numbers/punctuation
+		if [ -n "$line" ] && ! echo "$line" | grep -qE '^[0-9]+[.)]?[[:space:]]*$'; then
 			options+=("$line")
 		fi
 	done <<< "$translated"
 
-	# If we have multiple options, show selection interface
+	# If we have multiple options, show selection interface with arrow key navigation
 	if [ ${#options[@]} -gt 1 ]; then
-		# Show options numbered for easy selection
 		local max_options=${#options[@]}
-		local i
 		
-		# Clear and show options
-		echo ""
+		# Store options and state in global variables for widget access
+		typeset -g _aiterm_options=("${options[@]}")
+		typeset -g _aiterm_selected=1
+		typeset -g _aiterm_max_options=$max_options
+		typeset -g _aiterm_current_buffer="$current_buffer"
+		typeset -g _aiterm_selection_done=0
+		typeset -g _aiterm_menu_lines=$((max_options + 1))
+		
+		local SELECTED_COLOR=$'\033[1;32m'
+		local NORMAL_COLOR=$'\033[0m'
+		local INSTRUCTIONS_COLOR=$'\033[0;36m'
+		
+		# Function to display selection menu
+		_aiterm_display_menu() {
+			# Temporarily restore terminal to cooked mode for display
+			# Use the global tty_fd if available, otherwise use /dev/tty directly
+			local tty_to_use=${_aiterm_tty_fd:-/dev/tty}
+			if [[ "$tty_to_use" =~ ^[0-9]+$ ]]; then
+				# It's a file descriptor number
+				local display_stty=$(stty -g <&$tty_to_use 2>/dev/null)
+				stty cooked echo <&$tty_to_use 2>/dev/null || true
+			else
+				# It's a path, open it
+				exec {local_fd}<>"$tty_to_use" 2>/dev/null || return
+				local display_stty=$(stty -g <&$local_fd 2>/dev/null)
+				stty cooked echo <&$local_fd 2>/dev/null || true
+			fi
+			
+			local i idx option_text
+			# Move cursor up to start of menu (max_options + 1 for instructions line)
+			printf "\033[${_aiterm_menu_lines}A" >&2
+			# Display each option
+			for ((i=1; i<=_aiterm_max_options; i++)); do
+				idx=$((i-1))
+				option_text="${_aiterm_options[$idx]}"
+				if [ $i -eq $_aiterm_selected ]; then
+					printf "\033[2K${SELECTED_COLOR}➤ ${option_text}${NORMAL_COLOR}\r\n" >&2
+				else
+					printf "\033[2K  ${option_text}\r\n" >&2
+				fi
+			done
+			printf "\033[2K${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Esc/C: Cancel${NORMAL_COLOR}\r" >&2
+			
+			# Restore raw mode for key reading
+			if [[ "$tty_to_use" =~ ^[0-9]+$ ]]; then
+				stty -icanon -echo min 0 time 0 <&$tty_to_use 2>/dev/null || true
+			else
+				stty -icanon -echo min 0 time 0 <&$local_fd 2>/dev/null || true
+				exec {local_fd}<&-
+			fi
+		}
+		
+		
+		# Initial display
+		echo "" >&2
 		for ((i=1; i<=max_options; i++)); do
-			echo "  $i) ${options[$((i-1))]}"
+			idx=$((i-1))
+			option_text="${options[$idx]}"
+			if [ $i -eq 1 ]; then
+				echo "${SELECTED_COLOR}➤ ${option_text}${NORMAL_COLOR}" >&2
+			else
+				echo "  ${option_text}" >&2
+			fi
 		done
-		echo "  0) Cancel (restore original text)"
-		echo ""
-		echo -n "Select option (0-$max_options, default: 1): "
+		echo "${INSTRUCTIONS_COLOR}↑/↓: Navigate  Enter: Select  Esc/C: Cancel${NORMAL_COLOR}" >&2
 		
-		# Read selection - use vared for better ZLE integration
-		local selection=""
-		# Temporarily disable ZLE to read input
-		zle -I
-		read -r selection < /dev/tty 2>/dev/null || read -r selection
-		
-		# Parse selection
-		local selected=${selection:-1}
-		if [ "$selected" = "0" ] || [ -z "$selected" ]; then
-			# Cancel or empty - restore original buffer
-			BUFFER="$current_buffer"
-			CURSOR=${#BUFFER}
-		elif [ "$selected" -ge 1 ] && [ "$selected" -le $max_options ]; then
-			# Valid selection
-			BUFFER="${options[$((selected-1))]}"
-			CURSOR=${#BUFFER}
-		else
-			# Invalid selection - use first option
+		# Wait for selection by reading keys directly from terminal
+		# We need to read keys without zle interfering
+		local tty_fd
+		if ! exec {tty_fd}<>/dev/tty 2>/dev/null; then
+			# Fallback: use first option if we can't open terminal
 			BUFFER="${options[0]}"
 			CURSOR=${#BUFFER}
+			zle reset-prompt
+			return 0
 		fi
 		
-		# Clear the selection prompt
-		local lines_to_clear=$((max_options + 4))
-		echo -ne "\033[${lines_to_clear}A\033[J"
+		# Store tty_fd globally so display function can access it
+		typeset -g _aiterm_tty_fd=$tty_fd
+		
+		# Save terminal state and set raw mode for key reading
+		# Use -icanon to disable canonical mode, but keep output working
+		local old_stty=$(stty -g <&$tty_fd 2>/dev/null)
+		# Set raw mode: disable echo and canonical mode, but allow output
+		stty -icanon -echo min 0 time 0 <&$tty_fd 2>/dev/null || {
+			# If stty fails, close fd and use first option
+			exec {tty_fd}<&-
+			BUFFER="${options[0]}"
+			CURSOR=${#BUFFER}
+			zle reset-prompt
+			return 0
+		}
+		
+		# Read keys until selection is done
+		while [ $_aiterm_selection_done -eq 0 ]; do
+			# Read a single byte (dd will block until data is available)
+			local key=$(dd bs=1 count=1 <&$tty_fd 2>/dev/null)
+			[ -z "$key" ] && continue
+			
+			case "$key" in
+				$'\e')
+					# Escape sequence - read next char
+					local key2=$(dd bs=1 count=1 <&$tty_fd 2>/dev/null)
+					if [ "$key2" = '[' ]; then
+						local key3=$(dd bs=1 count=1 <&$tty_fd 2>/dev/null)
+						case "$key3" in
+							'A') # Up arrow
+								if [ $_aiterm_selected -gt 1 ]; then
+									_aiterm_selected=$((_aiterm_selected - 1))
+									_aiterm_display_menu
+								fi
+								;;
+							'B') # Down arrow
+								if [ $_aiterm_selected -lt $_aiterm_max_options ]; then
+									_aiterm_selected=$((_aiterm_selected + 1))
+									_aiterm_display_menu
+								fi
+								;;
+						esac
+					else
+						# Just Escape - cancel
+						_aiterm_selection_done=1
+						BUFFER="$_aiterm_current_buffer"
+						CURSOR=${#BUFFER}
+						break
+					fi
+					;;
+				$'\n'|$'\r')
+					# Enter - accept selection
+					_aiterm_selection_done=1
+					local idx=$((_aiterm_selected-1))
+					BUFFER="${_aiterm_options[$idx]}"
+					CURSOR=${#BUFFER}
+					break
+					;;
+				'c'|'C')
+					# Cancel with 'c'
+					_aiterm_selection_done=1
+					BUFFER="$_aiterm_current_buffer"
+					CURSOR=${#BUFFER}
+					break
+					;;
+				$'\x03')
+					# Ctrl+C - cancel
+					_aiterm_selection_done=1
+					BUFFER="$_aiterm_current_buffer"
+					CURSOR=${#BUFFER}
+					break
+					;;
+			esac
+		done
+		
+		# Restore terminal state before clearing menu
+		stty "$old_stty" <&$tty_fd 2>/dev/null || true
+		exec {tty_fd}<&-
+		
+		# Clear menu from screen
+		echo -ne "\033[${_aiterm_menu_lines}A\033[J" >&2
+		
+		# Clean up global variables
+		unset _aiterm_options _aiterm_selected _aiterm_max_options _aiterm_current_buffer _aiterm_selection_done _aiterm_menu_lines _aiterm_tty_fd
 	else
 		# Single option - replace buffer directly
 		if [ -n "$translated" ]; then
@@ -195,7 +324,7 @@ ai-translate-command() {
 }
 
 # Register as a ZLE widget
-zle -N ai-translate-command
+zle -N ai-translate-command >/dev/null 2>&1
 
 # Function to set up key bindings - must be called when ZLE is active
 setup-aiterm-bindings() {
@@ -203,58 +332,59 @@ setup-aiterm-bindings() {
 	[ -n "$_aiterm_bindings_set" ] && return
 	_aiterm_bindings_set=1
 	
-	# Ensure keymaps are available
-	zmodload zsh/terminfo 2>/dev/null || true
+	# Ensure keymaps are available (suppress all output)
+	zmodload zsh/terminfo >/dev/null 2>&1 || true
 	
-	# Check if widget exists
-	if ! zle -l | grep -q "ai-translate-command"; then
+	# Check if widget exists (suppress grep output)
+	if ! zle -l 2>/dev/null | grep -q "ai-translate-command" 2>/dev/null; then
 		return 1
 	fi
 	
 	# Bind to Ctrl+X then Ctrl+A (most reliable, works in most terminals)
-	bindkey '^X^A' ai-translate-command 2>/dev/null || true
+	# Suppress all output including stderr
+	bindkey '^X^A' ai-translate-command >/dev/null 2>&1 || true
 	
 	# Bind to Ctrl+Space (^@ is the control sequence for Ctrl+Space)
 	# Note: This may not work in all terminals
-	bindkey -M emacs '^@' ai-translate-command 2>/dev/null || true
-	bindkey -M viins '^@' ai-translate-command 2>/dev/null || true
-	bindkey -M vicmd '^@' ai-translate-command 2>/dev/null || true
-	bindkey '^@' ai-translate-command 2>/dev/null || true
+	bindkey -M emacs '^@' ai-translate-command >/dev/null 2>&1 || true
+	bindkey -M viins '^@' ai-translate-command >/dev/null 2>&1 || true
+	bindkey -M vicmd '^@' ai-translate-command >/dev/null 2>&1 || true
+	bindkey '^@' ai-translate-command >/dev/null 2>&1 || true
 	
 	# Alternative binding: Alt+Space (more compatible)
-	bindkey '\e ' ai-translate-command 2>/dev/null || true
+	bindkey '\e ' ai-translate-command >/dev/null 2>&1 || true
 }
 
 # Use zsh's zle-line-init hook to set bindings when line editor initializes
 # This ensures bindings are set after user's zshrc loads and persist
 # Check if user already has zle-line-init and preserve it
-if typeset -f zle-line-init > /dev/null 2>&1; then
+if typeset -f zle-line-init >/dev/null 2>&1; then
 	# User has zle-line-init, wrap it properly
 	_aiterm_original_zle_line_init=$(functions zle-line-init)
 	_aiterm_zle_line_init_wrapper() {
-		eval "$_aiterm_original_zle_line_init"
-		setup-aiterm-bindings
+		eval "$_aiterm_original_zle_line_init" >/dev/null 2>&1
+		setup-aiterm-bindings >/dev/null 2>&1
 	}
-	zle -N zle-line-init _aiterm_zle_line_init_wrapper
+	zle -N zle-line-init _aiterm_zle_line_init_wrapper >/dev/null 2>&1
 else
 	# No existing zle-line-init, create our own
 	zle-line-init() {
-		setup-aiterm-bindings
+		setup-aiterm-bindings >/dev/null 2>&1
 	}
-	zle -N zle-line-init
+	zle -N zle-line-init >/dev/null 2>&1
 fi
 
-# Also set up bindings immediately (for first prompt)
-setup-aiterm-bindings
+# Also set up bindings immediately (for first prompt) - suppress output
+setup-aiterm-bindings >/dev/null 2>&1
 
 # Use precmd hook as backup to ensure bindings are set (only once)
 autoload -Uz add-zsh-hook
 aiterm-setup-bindings-hook() {
-	setup-aiterm-bindings
+	setup-aiterm-bindings >/dev/null 2>&1
 	# Remove hook after first run
-	add-zsh-hook -d precmd aiterm-setup-bindings-hook
+	add-zsh-hook -d precmd aiterm-setup-bindings-hook >/dev/null 2>&1
 }
-add-zsh-hook precmd aiterm-setup-bindings-hook
+add-zsh-hook precmd aiterm-setup-bindings-hook >/dev/null 2>&1
 
 # Note: Ctrl+Tab is often intercepted by terminal emulators and may not work
 # Uncomment the following line if your terminal supports it:
