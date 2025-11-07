@@ -10,6 +10,7 @@ import (
 	"github.com/andreim2k/aiterm/config"
 	"github.com/andreim2k/aiterm/internal"
 	"github.com/andreim2k/aiterm/logger"
+	"github.com/andreim2k/aiterm/system"
 	"github.com/spf13/cobra"
 )
 
@@ -42,15 +43,32 @@ var rootCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			mgr, err := internal.NewManager(cfg, false)
+			// Create a minimal manager for translation to ensure proper configuration
+			mgr, err := internal.NewManagerForTranslation(cfg)
 			if err != nil {
-				logger.Error("manager.NewManager failed: %v", err)
+				logger.Error("Failed to create manager: %v", err)
+				fmt.Fprintf(os.Stderr, "Failed to create manager: %v\n", err)
 				os.Exit(1)
 			}
 
-			translated, err := internal.TranslateNaturalLanguage(mgr, aiTranslate)
+			// Get system information
+			osName := system.GetOSDetails()
+			shellPath := os.Getenv("SHELL")
+			if shellPath == "" {
+				shellPath = "/bin/bash"
+			}
+			cwd, _ := os.Getwd()
+
+			// Get model configuration
+			model := mgr.GetModelsDefault()
+			if model == "" {
+				model = "gpt-4o-mini"
+			}
+
+			translated, err := mgr.AiClient.TranslateNaturalLanguage(aiTranslate, osName, shellPath, cwd, model)
 			if err != nil {
 				logger.Error("Translation failed: %v", err)
+				fmt.Fprintf(os.Stderr, "Translation error: %v\n", err)
 				os.Exit(1)
 			}
 

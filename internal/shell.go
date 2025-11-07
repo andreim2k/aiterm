@@ -93,32 +93,21 @@ fi
 # Prevent shell from exiting on Ctrl+D
 setopt ignore_eof
 
-# Trap EXIT to debug what causes shell to exit
-trap 'echo "[DEBUG] Shell exiting! Trap caught EXIT signal" >&2; echo "[DEBUG] Last command: $?" >&2' EXIT
-
-# Debug: Print that we loaded
-echo "[AISH] Loaded AI translation keybinding - Press Ctrl+Space to translate" >&2
-
 # AI translation function
 ai-translate-command() {
 	# Disable job control notifications
 	setopt local_options no_notify no_monitor
 
-	echo "[DEBUG] Function triggered!" >&2
 	local current_buffer="$BUFFER"
 
 	if [ -z "$current_buffer" ]; then
-		echo "[DEBUG] Buffer is empty, returning" >&2
 		return
 	fi
-
-	echo "[DEBUG] Buffer content: $current_buffer" >&2
 
 	# Start translation in background
 	local tmpfile=$(mktemp)
 	%s --ai-translate "$current_buffer" < /dev/null > "$tmpfile" 2>&1 &
 	local job=$!
-	echo "[DEBUG] Job PID: $job" >&2
 
 	# Spinner animation with braille characters
 	local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
@@ -135,29 +124,20 @@ ai-translate-command() {
 
 	# Get result
 	local translated=$(cat $tmpfile)
-	echo "[DEBUG] Translation result: '$translated'" >&2
-	echo "[DEBUG] Tmpfile contents:" >&2
-	cat $tmpfile >&2
 	rm $tmpfile
 
 	# Replace buffer with translated command
 	if [ -n "$translated" ]; then
-		echo "[DEBUG] Setting BUFFER to: $translated" >&2
 		BUFFER="$translated"
 		CURSOR=${#BUFFER}
-		echo "[DEBUG] BUFFER set, CURSOR=$CURSOR" >&2
 	else
 		# Restore original if translation failed
-		echo "[DEBUG] Translation was empty, restoring original" >&2
 		BUFFER="$current_buffer"
 		CURSOR=${#BUFFER}
 	fi
 
-	echo "[DEBUG] About to call zle reset-prompt" >&2
-	echo "[DEBUG] Final BUFFER value: '$BUFFER'" >&2
 	# Redraw
-	zle reset-prompt && echo "[DEBUG] zle reset-prompt succeeded" >&2 || echo "[DEBUG] zle reset-prompt failed: $?" >&2
-	echo "[DEBUG] Function completed successfully, returning to shell" >&2
+	zle reset-prompt
 	return 0
 }
 
@@ -169,12 +149,6 @@ zle -N ai-translate-command
 bindkey '^@' ai-translate-command
 # Alternative binding for tmux compatibility: Ctrl+X then Ctrl+A
 bindkey '^X^A' ai-translate-command
-
-# Debug: Show the bindings
-echo "[DEBUG] Keybindings set:" >&2
-echo "  - Ctrl+Space (or Ctrl+Space twice in tmux)" >&2
-echo "  - Ctrl+X then Ctrl+A (alternative)" >&2
-bindkey | grep ai-translate >&2
 `, homeDir, homeDir, aitermPath)
 
 		err = os.WriteFile(zshrcPath, []byte(content), 0600)

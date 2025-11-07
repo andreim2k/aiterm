@@ -39,13 +39,13 @@ type Manager struct {
 	Messages         []ChatMessage
 	ExecHistory      []CommandExecHistory
 	WatchMode        bool
-	ShellMode        bool   // AI Shell mode (aish)
+	ShellMode        bool // AI Shell mode (aish)
 	OS               string
 	SessionOverrides map[string]interface{} // session-only config overrides
 	LoadedKBs        map[string]string      // Loaded knowledge bases (name -> content)
 
 	// Functions for mocking
-	confirmedToExec  func(command string, prompt string, edit bool) (bool, string)
+	confirmedToExec   func(command string, prompt string, edit bool) (bool, string)
 	getTmuxPanesInXml func(config *config.Config) string
 }
 
@@ -116,6 +116,33 @@ func NewManager(cfg *config.Config, shellMode bool) (*Manager, error) {
 	return manager, nil
 }
 
+// NewManagerForTranslation creates a minimal manager for AI command translation
+// This bypasses all tmux initialization for use in shell mode translation
+func NewManagerForTranslation(cfg *config.Config) (*Manager, error) {
+	aiClient := NewAiClient(cfg)
+	os := system.GetOSDetails()
+
+	manager := &Manager{
+		Config:           cfg,
+		AiClient:         aiClient,
+		PaneId:           "", // No pane ID needed for translation
+		Messages:         []ChatMessage{},
+		ExecPane:         &system.TmuxPaneDetails{},
+		ShellMode:        true, // Set to true to indicate this is for shell mode
+		OS:               os,
+		SessionOverrides: make(map[string]interface{}),
+		LoadedKBs:        make(map[string]string),
+	}
+
+	// Set the config manager in the AI client
+	aiClient.SetConfigManager(manager)
+
+	manager.confirmedToExec = manager.confirmedToExecFn
+	manager.getTmuxPanesInXml = manager.getTmuxPanesInXmlFn
+
+	return manager, nil
+}
+
 // Start starts the manager agent
 func (m *Manager) Start(initMessage string) error {
 	if m.ShellMode {
@@ -151,7 +178,7 @@ func (m *Manager) GetPrompt() string {
 	arrowColor := color.New(color.FgYellow, color.Bold)
 	stateColor := color.New(color.FgMagenta, color.Bold)
 	modelColor := color.New(color.FgCyan, color.Bold)
-doneColor := color.New(color.FgCyan, color.Bold)
+	doneColor := color.New(color.FgCyan, color.Bold)
 
 	var stateSymbol string
 	switch m.Status {

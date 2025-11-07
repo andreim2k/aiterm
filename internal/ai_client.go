@@ -22,9 +22,9 @@ const (
 
 // AiClient represents an AI client for interacting with OpenAI-compatible APIs including Azure OpenAI
 type AiClient struct {
-	config      *config.Config
-	configMgr   *Manager  // To access model configuration methods
-	client      *http.Client
+	config    *config.Config
+	configMgr *Manager // To access model configuration methods
+	client    *http.Client
 }
 
 // Message represents a chat message
@@ -60,43 +60,43 @@ type ResponseInput interface{}
 
 // ResponseContent represents content in the Responses API
 type ResponseContent struct {
-	Type   string      `json:"type"`
-	Text   string      `json:"text,omitempty"`
+	Type        string        `json:"type"`
+	Text        string        `json:"text,omitempty"`
 	Annotations []interface{} `json:"annotations,omitempty"`
 }
 
 // ResponseOutputItem represents an output item in the Responses API
 type ResponseOutputItem struct {
-	ID      string           `json:"id"`
-	Type    string           `json:"type"` // "message", "reasoning", "function_call", etc.
-	Status  string           `json:"status,omitempty"` // "completed", "in_progress", etc.
+	ID      string            `json:"id"`
+	Type    string            `json:"type"`             // "message", "reasoning", "function_call", etc.
+	Status  string            `json:"status,omitempty"` // "completed", "in_progress", etc.
 	Content []ResponseContent `json:"content,omitempty"`
-	Role    string           `json:"role,omitempty"` // "assistant", "user", etc.
-	Summary []interface{}    `json:"summary,omitempty"`
+	Role    string            `json:"role,omitempty"` // "assistant", "user", etc.
+	Summary []interface{}     `json:"summary,omitempty"`
 }
 
 // ResponseRequest represents a request to the Responses API
 type ResponseRequest struct {
-	Model         string                 `json:"model"`
-	Input         ResponseInput          `json:"input"`
-	Instructions  string                 `json:"instructions,omitempty"`
-	Tools         []interface{}          `json:"tools,omitempty"`
-	PreviousResponseID string             `json:"previous_response_id,omitempty"`
-	Store         bool                   `json:"store,omitempty"`
-	Include       []string               `json:"include,omitempty"`
-	Text          map[string]interface{} `json:"text,omitempty"` // for structured outputs
+	Model              string                 `json:"model"`
+	Input              ResponseInput          `json:"input"`
+	Instructions       string                 `json:"instructions,omitempty"`
+	Tools              []interface{}          `json:"tools,omitempty"`
+	PreviousResponseID string                 `json:"previous_response_id,omitempty"`
+	Store              bool                   `json:"store,omitempty"`
+	Include            []string               `json:"include,omitempty"`
+	Text               map[string]interface{} `json:"text,omitempty"` // for structured outputs
 }
 
 // Response represents a response from the Responses API
 type Response struct {
-	ID                string               `json:"id"`
-	Object            string               `json:"object"`
-	CreatedAt         int64                `json:"created_at"`
-	Model             string               `json:"model"`
-	Output            []ResponseOutputItem `json:"output"`
-	OutputText        string               `json:"output_text,omitempty"`
-	Error             *ResponseError       `json:"error,omitempty"`
-	Usage             *ResponseUsage       `json:"usage,omitempty"`
+	ID         string               `json:"id"`
+	Object     string               `json:"object"`
+	CreatedAt  int64                `json:"created_at"`
+	Model      string               `json:"model"`
+	Output     []ResponseOutputItem `json:"output"`
+	OutputText string               `json:"output_text,omitempty"`
+	Error      *ResponseError       `json:"error,omitempty"`
+	Usage      *ResponseUsage       `json:"usage,omitempty"`
 }
 
 // ResponseError represents an error in the Responses API
@@ -108,10 +108,10 @@ type ResponseError struct {
 
 // ResponseUsage represents token usage in the Responses API
 type ResponseUsage struct {
-	InputTokens          int `json:"input_tokens"`
-	OutputTokens         int `json:"output_tokens"`
-	ReasoningTokens      int `json:"reasoning_tokens,omitempty"`
-	TotalTokens          int `json:"total_tokens"`
+	InputTokens     int `json:"input_tokens"`
+	OutputTokens    int `json:"output_tokens"`
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+	TotalTokens     int `json:"total_tokens"`
 }
 
 func NewAiClient(cfg *config.Config) *AiClient {
@@ -554,4 +554,92 @@ func debugChatMessages(chatMessages []ChatMessage, response string) {
 	_, _ = file.WriteString("==================    RECEIVED RESPONSE ==================\n\n")
 	_, _ = file.WriteString(response)
 	_, _ = file.WriteString("\n\n==================    END DEBUG ==================\n")
+}
+
+// TranslateNaturalLanguage translates natural language to shell commands without requiring a full manager
+func (c *AiClient) TranslateNaturalLanguage(naturalLanguage string, osName string, shellPath string, cwd string, model string) (string, error) {
+	// Build AI prompt for command translation
+	if shellPath == "" {
+		shellPath = "/bin/bash"
+	}
+
+	systemPrompt := fmt.Sprintf(`You are a shell command translator. Convert natural language to shell commands.
+
+Operating System: %s
+Shell: %s
+Current Directory: %s
+
+Rules:
+1. Output ONLY a single shell command, nothing else
+2. No explanations, no comments, no markdown
+3. Command should be safe and follow best practices
+
+Examples:
+Input: "list all files"
+Output: ls -la
+
+Input: "find python files"
+Output: find . -name "*.py"
+
+Respond with ONLY the command.`, osName, shellPath, cwd)
+
+	userPrompt := fmt.Sprintf("Translate: %s", naturalLanguage)
+
+	// Create chat messages
+	aiMessages := []Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	// Call AI
+	ctx := context.Background()
+
+	// Determine which API to use
+	apiType := c.determineAPIType(model)
+
+	// Get the actual model identifier if we have a config manager
+	actualModel := model
+	if c.configMgr != nil {
+		if modelConfig, exists := c.configMgr.GetModelConfig(model); exists {
+			// Use the model as specified in the configuration
+			actualModel = modelConfig.Model
+		}
+	}
+
+	// Route to appropriate API
+	var response string
+	var err error
+
+	switch apiType {
+	case "responses":
+		response, err = c.Response(ctx, aiMessages, actualModel)
+	case "azure":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "openrouter":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "requesty":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "zai":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "xai":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	case "alibaba":
+		response, err = c.ChatCompletion(ctx, aiMessages, actualModel)
+	default:
+		return "", fmt.Errorf("unknown API type: %s", apiType)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("AI API call failed: %v", err)
+	}
+
+	// Clean up response
+	response = strings.TrimSpace(response)
+	response = strings.TrimPrefix(response, "```bash")
+	response = strings.TrimPrefix(response, "```sh")
+	response = strings.TrimPrefix(response, "```")
+	response = strings.TrimSuffix(response, "```")
+	response = strings.TrimSpace(response)
+
+	return response, nil
 }
